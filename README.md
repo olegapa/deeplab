@@ -21,7 +21,7 @@ sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./video_
 Apart from default keys: input_data (json file in input directory in format of tracking output file for inference
 and inference output file for training mode) and --work_format_training (flag that marks training mode)
 there also --demo_mode flag for inference that allows to save output bounder boxes and masks images in output
-directory.
+directory. In current version of code every 10th frame is processed (if bounder boxes are correct for such frames).
 
 Format for inference output file:
 ```json
