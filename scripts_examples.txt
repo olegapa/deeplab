@@ -1,0 +1,1 @@
+python entrypoint.py --image_path "/input/another_dataset/png_images/IMAGES" --output_path "/output/metro_deeplab_test2" --model_path "/output/saved_models/clothing_best_model.pt"

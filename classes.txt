@@ -1,0 +1,18 @@
+0. Background - accessories, belt, glasses, sunglasses, bracelet, earrings, hair, skin, necklace, ring, wallet, watch
+1. Jacket/Coat - cape, jacket, coat, cardigan
+2. Shirt/Blouse - blouse, shirt
+3. Sweater/Sweatshirt/Hoodie - hoodie, jumper, sweater, sweatshirt
+4. Dress/Romper - Dress, Romper
+5. Pants/Jeans/Leggings - jeans, leggings, pants, tights
+6. Shorts - shorts
+7. skirt - skirt
+8. Shoes - clogs, shoes, flats, heels, loafers, pumps, sandals, sneakers
+9. Vest - vest
+10. Boots - boots
+11. Bodysuit/T-shirt/Top - bodysuit, t-shirt, top
+12. Bag/Purse - bag, purse
+13. Hat - hat
+14. Scarf/Tie - tie, scarf
+15. gloves - gloves
+16. Blazer/Suit - blazer, suit
+17. Underwear/Swim - intimate, panties, swimwear, bra
