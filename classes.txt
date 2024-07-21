@@ -16,3 +16,4 @@
 15. gloves - gloves
 16. Blazer/Suit - blazer, suit
 17. Underwear/Swim - intimate, panties, swimwear, bra
+18. Socks/Stockings - socks, stocklings
