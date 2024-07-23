@@ -2,8 +2,15 @@ import argparse
 import base64
 import json
 import os
-
+import time
 import cv2
+import logging
+
+
+run_time = time.time()
+logging.basicConfig(level=logging.INFO, filename='/output/deeplab.log', filemode='w',
+                    format='%(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description="Process some images.")
 
@@ -39,6 +46,8 @@ if args.min_height:
     min_height = int(args.min_height)
 else:
     min_height = 5
+PROCESS_FREQ = 10
+
 
 def get_image_name(video, frame, person):
     return f"{video.split('.')[0].split('/')[-1]}_frame_{frame}_person_{person}.png"
@@ -79,12 +88,19 @@ def prepare_image_dir(file_path, prepared_data, out_path, mask_out_path=None):
 
     cap.release()
 
+processed_frames = {"small": 0, 'ok': 0}
 
 def frame_process_condition(num, markup_path):
-    return (int(num) % 10 == 1 and markup_path['x'] > 0 and markup_path['y'] > 0
-            and markup_path['width'] > min_width and markup_path['height'] > min_height)
+    if (int(num) % PROCESS_FREQ == 1 and markup_path['x'] > 0 and markup_path['y'] > 0
+            and markup_path['width'] > min_width and markup_path['height'] > min_height):
+        if markup_path['width'] < 50 or markup_path['height'] < 100:
+            processed_frames["small"] += 1
+        else:
+            processed_frames['ok'] += 1
+        return True
 
 
+start_time = time.time()
 for item in input_data['files']:
     prepared_data = dict()
     video_path = item['file_name']
@@ -99,7 +115,9 @@ for item in input_data['files']:
                     prepared_data[frame_num] = dict()
                 prepared_data[frame_num][chain_id] = frame["markup_path"]
     prepare_image_dir(f'/input/{video_path}', prepared_data, image_temp_path, mask_temp_path)
-
+logger.info(f'Data preparation took {time.time() - start_time} seconds')
+logger.info(f'Amount of small images (with height < 100 or width < 50): {processed_frames["small"]} '
+            f'Amount of other images: {processed_frames["ok"]}. Total: {processed_frames["small"] + processed_frames["ok"]}')
 
 
 def get_img_str(file_name):
@@ -148,12 +166,15 @@ def prepare_output():
 
 
 if work_format_training:
+    start_time = time.time()
     output_weights = f'{output_path}/deeplab_weights.pt'
     command = f'python run_train.py --image_path {image_temp_path} --mask_path {mask_temp_path} --output_weights {output_weights}'
     if model_path:
         command += f' --model_path {model_path}'
     os.system(command)
+    logger.info(f'Deeplab training took {time.time() - start_time} seconds')
 else:
+    start_time = time.time()
     command = f'python run_inference.py --image_path {image_temp_path} --output_path {mask_temp_path} --model_path {model_path}'
     if model_path:
         command += f' --model_path {model_path}'
@@ -161,8 +182,10 @@ else:
     if demo_mode:
         command += f' --demo_mode'
     os.system(command)
+    logger.info(f'Deeplab inference took {time.time() - start_time} seconds')
 
 if not work_format_training:
     result = prepare_output()
     with open(f"{output_path}/deeplab.json", "w") as outfile:
         json.dump(result, outfile, ensure_ascii=False)
+logger.info(f'The whole process took {time.time() - run_time} seconds, work_format_training mode = {work_format_training}')

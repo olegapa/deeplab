@@ -7,7 +7,7 @@ First of all you need to build an image:
 docker build -t deeplab-image .
 ```
 
-#### 1. Evaluate / Markup mode
+#### 1. Evaluate / training mode
 
 You need to run the container and mount all of the necessary directories. Example how to launch inference:
 ```
