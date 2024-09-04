@@ -5,7 +5,7 @@ import os
 import time
 import cv2
 import logging
-
+from container_status import ContainerStatus as CS
 
 run_time = time.time()
 logging.basicConfig(level=logging.INFO, filename='/output/deeplab.log', filemode='w',
@@ -17,6 +17,7 @@ parser = argparse.ArgumentParser(description="Process some images.")
 parser.add_argument('--input_data', type=str, help='Path to the input image')
 parser.add_argument("--work_format_training", action="store_true", help="Flag for training mode")
 parser.add_argument("--demo_mode", action="store_true", help="Flag for demo mode")
+parser.add_argument("--host_web", type=str, help="url host with web")
 parser.add_argument("--min_width", type=str, help='Path to the input image')
 parser.add_argument("--min_height", type=str, help='Path to the input image')
 
@@ -36,6 +37,8 @@ temp_root = "/output" if demo_mode else "temp_image_root"
 
 image_temp_path = f"{temp_root}/bboxes"
 mask_temp_path = f"{temp_root}/masks"
+
+cs = CS(args.host_web)
 
 # Необязательные параметры на ограничения изображений
 if args.min_width:
@@ -99,7 +102,7 @@ def frame_process_condition(num, markup_path):
             processed_frames['ok'] += 1
         return True
 
-
+cs.post_start()
 start_time = time.time()
 for item in input_data['files']:
     prepared_data = dict()
