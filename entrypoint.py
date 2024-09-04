@@ -38,7 +38,7 @@ temp_root = "/output" if demo_mode else "temp_image_root"
 image_temp_path = f"{temp_root}/bboxes"
 mask_temp_path = f"{temp_root}/masks"
 
-cs = CS(args.host_web)
+cs = CS(args.host_web, logger)
 
 # Необязательные параметры на ограничения изображений
 if args.min_width:
@@ -171,14 +171,14 @@ def prepare_output():
 if work_format_training:
     start_time = time.time()
     output_weights = f'{output_path}/deeplab_weights.pt'
-    command = f'python run_train.py --image_path {image_temp_path} --mask_path {mask_temp_path} --output_weights {output_weights}'
+    command = f'python run_train.py --image_path {image_temp_path} --mask_path {mask_temp_path} --output_weights {output_weights} --host_web {args.host_web}'
     if model_path:
         command += f' --model_path {model_path}'
     os.system(command)
     logger.info(f'Deeplab training took {time.time() - start_time} seconds')
 else:
     start_time = time.time()
-    command = f'python run_inference.py --image_path {image_temp_path} --output_path {mask_temp_path} --model_path {model_path}'
+    command = f'python run_inference.py --image_path {image_temp_path} --output_path {mask_temp_path} --model_path {model_path} --host_web {args.host_web}'
     if model_path:
         command += f' --model_path {model_path}'
     command += f' --class_info_path {output_path}/labels.txt'

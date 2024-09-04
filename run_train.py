@@ -13,6 +13,8 @@ from tqdm import tqdm
 from torch.nn import functional as F
 import logging
 
+from container_status import ContainerStatus as CS
+
 # Настройка логгера
 logging.basicConfig(level=logging.INFO, filename='/output/training.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ image_path = args.image_path
 mask_path = args.mask_path
 model_path = args.model_path
 output_weights = args.output_weights
+cs = CS(args.host_web, logger)
 
 
 class CustomSegmentationDataset(Dataset):

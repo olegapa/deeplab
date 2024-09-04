@@ -1,3 +1,4 @@
+import logging
 import socket
 import subprocess
 import requests
@@ -7,7 +8,7 @@ from urllib.parse import urljoin
 
 class ContainerStatus():
 
-    def __init__(self, host_web):
+    def __init__(self, host_web, logger: logging):
         self.host_web = host_web
         self.short_id = None
         self.full_id = None
@@ -18,6 +19,7 @@ class ContainerStatus():
                        '/events/{}/on_error',
                        # Вызывается в случае возникновения ошибки в процессе обработки данных в контейнере
                        '/events/{}/before_end']  # Вызывается после окончания обработки данных в контейнере и сохранением выходных файлов в папке OUT_DIR и перед остановкой (удалением) контейнера
+        self.logger = logger
 
     def get_short_id(self):
         '''Получение краткого id контейнера, как имя хоста
@@ -58,6 +60,7 @@ class ContainerStatus():
             res = requests.post(url, data)
         except Exception as e:
             print("Error: " + str(e))
+            self.logger.error(f"Can't send request to {url}, the error is: {str(e)}")
         finally:
             return res
 
@@ -73,7 +76,7 @@ class ContainerStatus():
         '''
         return self.post_status(0)
 
-    def post_progress(self):
+    def post_progress(self, progress):
         '''Шаблон post запроса со статусом on_progress
         Return: ответ на запрос
         '''

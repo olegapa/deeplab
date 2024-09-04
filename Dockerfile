@@ -4,6 +4,7 @@ WORKDIR /segmentation
 
 COPY . /segmentation
 
+RUN apt-get update && apt-get install -y docker.io
 RUN pip install torch torchvision
 RUN pip install opencv-python ftfy regex tqdm ttach tensorboard lxml cython
 RUN pip install segmentation_models_pytorch

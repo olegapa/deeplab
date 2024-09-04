@@ -1,5 +1,7 @@
 import argparse
 import json, os, torch, cv2, numpy as np, albumentations as A
+import logging
+
 from PIL import Image, ImageOps
 from matplotlib import pyplot as plt
 from glob import glob
@@ -12,7 +14,11 @@ import segmentation_models_pytorch as smp, time
 from tqdm import tqdm
 from torch.nn import functional as F
 
+from container_status import ContainerStatus as CS
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+logging.basicConfig(level=logging.INFO, filename='/output/deeplab.log', format='%(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description="Process some images.")
 
@@ -34,6 +40,7 @@ output_path = args.output_path
 model_path = args.model_path
 class_info_path = args.class_info_path
 demo_mode = args.demo_mode
+cs = CS(args.host_web, logger)
 
 color_mapping = {
     0: (0, 0, 0),         # Background
@@ -116,11 +123,14 @@ test_dl, n_cls = get_dls(transformations=trans, split=[0, 1])
 
 def inference(dl, model, device):
     os.makedirs(output_path, exist_ok=True)
+    total = len(dl)
     if demo_mode:
         colored_output_path = f"{output_path}_colored"
         os.makedirs(colored_output_path, exist_ok=True)
     labels_dict = {}
     for idx, (im, orig_size, save_name) in enumerate(dl):
+        if idx%1000 == 0:
+            cs.post_progress('{:.2%}'.format(idx/total))
         im = im.to(device)
         # Get predicted mask
         with torch.no_grad():
