@@ -29,6 +29,7 @@ parser.add_argument('--output_path', type=str, required=True, help='Path to the 
 parser.add_argument('--model_path', type=str, required=True, help='Path to the input image')
 parser.add_argument('--class_info_path', help='Path to the output class info file')
 parser.add_argument("--demo_mode", action="store_true", help="Flag for demo mode")
+parser.add_argument("--host_web", type=str, help="url host with web")
 
 # Парсим аргументы
 args = parser.parse_args()
@@ -43,32 +44,33 @@ demo_mode = args.demo_mode
 cs = CS(args.host_web, logger)
 
 color_mapping = {
-    0: (0, 0, 0),         # Background
-    1: (128, 0, 0),       # Jacket/Coat
-    2: (0, 128, 0),       # Shirt/Blouse
-    3: (128, 128, 0),     # Sweater/Sweatshirt/Hoodie
-    4: (0, 0, 128),       # Dress/Romper
-    5: (128, 0, 128),     # Pants/Jeans/Leggings
-    6: (0, 128, 128),     # Shorts
-    7: (128, 128, 128),   # Skirt
-    8: (64, 0, 0),        # Shoes
-    9: (192, 0, 0),       # Vest
-    10: (64, 128, 0),     # Boots
-    11: (192, 128, 0),    # Bodysuit/T-shirt/Top
-    12: (64, 0, 128),     # Bag/Purse
-    13: (192, 0, 128),    # Hat
-    14: (64, 128, 128),   # Scarf/Tie
+    0: (0, 0, 0),  # Background
+    1: (128, 0, 0),  # Jacket/Coat
+    2: (0, 128, 0),  # Shirt/Blouse
+    3: (128, 128, 0),  # Sweater/Sweatshirt/Hoodie
+    4: (0, 0, 128),  # Dress/Romper
+    5: (128, 0, 128),  # Pants/Jeans/Leggings
+    6: (0, 128, 128),  # Shorts
+    7: (128, 128, 128),  # Skirt
+    8: (64, 0, 0),  # Shoes
+    9: (192, 0, 0),  # Vest
+    10: (64, 128, 0),  # Boots
+    11: (192, 128, 0),  # Bodysuit/T-shirt/Top
+    12: (64, 0, 128),  # Bag/Purse
+    13: (192, 0, 128),  # Hat
+    14: (64, 128, 128),  # Scarf/Tie
     15: (192, 128, 128),  # Gloves
-    16: (0, 64, 0),       # Blazer/Suit
-    17: (128, 64, 0),     # Underwear/Swim
-    18: (0, 192, 0)       # Socks/Stockings
+    16: (0, 64, 0),  # Blazer/Suit
+    17: (128, 64, 0),  # Underwear/Swim
+    18: (0, 192, 0)  # Socks/Stockings
 }
+
 
 class CustomSegmentationDataset(Dataset):
     def __init__(self, transformations=None):
         self.im_paths = sorted(glob(f"{image_path}/*"))
         self.transformations = transformations
-        self.n_cls = 19 # количество новых классов
+        self.n_cls = 19  # количество новых классов
 
     def __len__(self):
         return len(self.im_paths)
@@ -123,41 +125,59 @@ test_dl, n_cls = get_dls(transformations=trans, split=[0, 1])
 
 def inference(dl, model, device):
     os.makedirs(output_path, exist_ok=True)
-    total = len(dl)
     if demo_mode:
         colored_output_path = f"{output_path}_colored"
         os.makedirs(colored_output_path, exist_ok=True)
     labels_dict = {}
+    polygons_dict = {}  # Для хранения полигонов
+    total = len(dl)
+
     for idx, (im, orig_size, save_name) in enumerate(dl):
-        if idx%1000 == 0:
-            cs.post_progress('{:.2%}'.format(idx/total))
+        if idx % 1000 == 0:
+            cs.post_progress('{:.2%}'.format(idx / total))
         im = im.to(device)
+
         # Get predicted mask
         with torch.no_grad():
             pred = torch.argmax(model(im.to(device)), dim=1).squeeze(0).cpu().numpy()
+
         # Convert prediction to an image and save
         pred_img = Image.fromarray(pred.astype(np.uint8))
         pred_img = pred_img.resize(orig_size, resample=Image.NEAREST)
         pred_img.save(os.path.join(output_path, save_name[0].split('/')[-1]))
+
         if demo_mode:
             colored_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
+
         detected_classes = set()
+        polygons_per_image = {}  # Полигон для каждого класса
+
         for label, color in color_mapping.items():
-            mask = pred == label
+            mask = (pred == label).astype(np.uint8)  # Бинарная маска для текущего класса
             if np.any(mask):
                 detected_classes.add(label)
+
+                # Находим контуры (полигоны) на маске
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                polygons_per_image[label] = [contour.squeeze().tolist() for contour in contours]  # Сохраняем контуры
+
                 if demo_mode:
-                    colored_pred[mask] = color
+                    colored_pred[mask == 1] = color
+
+        polygons_dict[save_name[0].split('/')[-1]] = polygons_per_image  # Сохраняем полигоны для изображения
+
         if demo_mode:
             colored_pred_img = Image.fromarray(colored_pred)
             colored_pred_img = colored_pred_img.resize(orig_size, resample=Image.NEAREST)
             colored_pred_img.save(os.path.join(colored_output_path, save_name[0].split('/')[-1]))
-        labels_dict[save_name[0].split('/')[-1]] = ' '.join(map(str, detected_classes))
-    with open(class_info_path, 'a') as class_info_file:
-        for img_name in sorted(labels_dict):
-            class_info_file.write(f"{img_name} {labels_dict[img_name]}\n")
 
-    print(f"Saved all predicted masks in {output_path}")
+        labels_dict[save_name[0].split('/')[-1]] = ' '.join(map(str, detected_classes))
+
+    # Сохранение полигонов
+    with open(class_info_path, 'a', encoding='utf-8') as polygon_file:
+        json.dump(polygons_dict, polygon_file, ensure_ascii=False)  # Сохраняем полигоны в файл
+
+    print(f"Saved all predicted masks and polygons in {output_path}")
 
 
 model = torch.load(f"{model_path}")

@@ -137,17 +137,7 @@ def get_img_str(file_name):
 def labels_to_dict(labels_file):
     res = dict()
     with open(labels_file, 'r', encoding='utf-8') as labels:
-        for line in labels:
-            # Удалить пробельные символы в начале и в конце строки и разбить строку по пробелам
-            parts = line.strip().split()
-
-            # Первая часть - это название файла, а оставшиеся части - метки классов
-            image_name = parts[0]
-            class_labels = " ".join(parts[1:])
-
-            # Записать данные в словарь
-            res[image_name] = class_labels
-    return res
+        return json.load(labels)
 
 
 def prepare_output():
@@ -164,7 +154,7 @@ def prepare_output():
                 if frame_process_condition(frame_num, frame["markup_path"]):
                     file_name = get_image_name(video_path, frame_num, chain_id)
                     frame['markup_path']['mask'] = get_img_str(file_name)
-                    frame['markup_path']['labels'] = labels[file_name]
+                    frame['markup_path']['polygons'] = labels[file_name]
     return input_data
 
 

@@ -61,6 +61,7 @@ class ContainerStatus():
         except Exception as e:
             print("Error: " + str(e))
             self.logger.error(f"Can't send request to {url}, the error is: {str(e)}")
+            res = {}
         finally:
             return res
 

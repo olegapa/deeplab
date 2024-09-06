@@ -28,6 +28,7 @@ parser.add_argument('--image_path', type=str, required=True, help='Path to the i
 parser.add_argument('--mask_path', type=str, help='Path to the mask image')
 parser.add_argument('--model_path', type=str, help='Path to the input image')
 parser.add_argument('--output_weights', type=str, help='Path to the input image')
+parser.add_argument("--host_web", type=str, help="url host with web")
 
 # Парсим аргументы
 args = parser.parse_args()
