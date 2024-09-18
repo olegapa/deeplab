@@ -159,6 +159,7 @@ def train(model, tr_dl, val_dl, loss_fn, opt, device, epochs, save_prefix, thres
     for epoch in range(1, epochs + 1):
         tic = tic_toc()
         tr_loss_, tr_iou_, tr_pa_ = 0, 0, 0
+        cs.post_progress('{:.2%}'.format(epoch / epochs))
 
         model.train()
         logger.info(f"Epoch {epoch} train process is started...")

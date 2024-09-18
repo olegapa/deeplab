@@ -127,9 +127,12 @@ def inference(dl, model, device):
     os.makedirs(output_path, exist_ok=True)
     if demo_mode:
         colored_output_path = f"{output_path}_colored"
+        polygonized_output_path = f"{output_path}_polygonized_mask"
         os.makedirs(colored_output_path, exist_ok=True)
+        os.makedirs(polygonized_output_path, exist_ok=True)
+
     labels_dict = {}
-    polygons_dict = {}  # Для хранения полигонов
+    polygons_dict = {}
     total = len(dl)
 
     for idx, (im, orig_size, save_name) in enumerate(dl):
@@ -148,28 +151,39 @@ def inference(dl, model, device):
 
         if demo_mode:
             colored_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
+            polygonized_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
 
         detected_classes = set()
-        polygons_per_image = {}  # Полигон для каждого класса
+        polygons_per_image = {}
 
         for label, color in color_mapping.items():
-            mask = (pred == label).astype(np.uint8)  # Бинарная маска для текущего класса
+            mask = (pred == label).astype(np.uint8)
             if np.any(mask):
                 detected_classes.add(label)
 
                 # Находим контуры (полигоны) на маске
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                polygons_per_image[label] = [contour.squeeze().tolist() for contour in contours]  # Сохраняем контуры
+                polygons_per_image[label] = [contour.squeeze().tolist() for contour in contours]
 
                 if demo_mode:
+                    # Окрашиваем оригинальную маску
                     colored_pred[mask == 1] = color
 
-        polygons_dict[save_name[0].split('/')[-1]] = polygons_per_image  # Сохраняем полигоны для изображения
+                    # Рисуем полигоны на пустой маске
+                    cv2.drawContours(polygonized_pred, contours, -1, color, thickness=cv2.FILLED)
+
+        polygons_dict[save_name[0].split('/')[-1]] = polygons_per_image
 
         if demo_mode:
+            # Сохраняем исходную окрашенную маску
             colored_pred_img = Image.fromarray(colored_pred)
             colored_pred_img = colored_pred_img.resize(orig_size, resample=Image.NEAREST)
             colored_pred_img.save(os.path.join(colored_output_path, save_name[0].split('/')[-1]))
+
+            # Сохраняем маску, восстановленную по полигонам
+            polygonized_pred_img = Image.fromarray(polygonized_pred)
+            polygonized_pred_img = polygonized_pred_img.resize(orig_size, resample=Image.NEAREST)
+            polygonized_pred_img.save(os.path.join(polygonized_output_path, save_name[0].split('/')[-1]))
 
         labels_dict[save_name[0].split('/')[-1]] = ' '.join(map(str, detected_classes))
 
