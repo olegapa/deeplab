@@ -146,7 +146,7 @@ class DeeplabInference:
         total = len(dl)
 
         for idx, (im, orig_size, save_name) in enumerate(dl):
-            if idx % 1000 == 0 and self.counter:
+            if idx % 1000 == 0 and self.counter and idx != 0:
                 self.counter.report_status(1000)
             # if idx % 1000 == 0:
                 # cs.post_progress('{:.2%}'.format(idx / total))

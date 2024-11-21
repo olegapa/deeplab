@@ -38,7 +38,7 @@ MODEL_PATH = "/weights"
 DEMO_MODE = args.demo_mode
 INPUT_DATA = "/input_data"
 
-TEMP_ROOT = "/output" if DEMO_MODE else "temp_image_root"
+TEMP_ROOT = OUTPUT_PATH if DEMO_MODE else "temp_image_root"
 
 IMAGE_TEMP_PATH = f"{TEMP_ROOT}/bboxes"
 MASK_TEMP_PATH = f"{TEMP_ROOT}/masks"
@@ -55,7 +55,7 @@ if args.min_height:
 else:
     min_height = 5
 if INPUT_DATA_ARG:
-    json_input_arg = json.load(INPUT_DATA_ARG)
+    json_input_arg = json.loads(INPUT_DATA_ARG.replace("'", "\""))
     PROCESS_FREQ = int(json_input_arg.get("frame_frequency", 1))
 else:
     PROCESS_FREQ = 1
@@ -80,7 +80,6 @@ def prepare_image_dir(file_path, prepared_data, out_path, mask_out_path=None):
 
     while success:
         success, frame = cap.read()
-        frame_count += 1
 
         if not success:
             break
@@ -103,7 +102,7 @@ def prepare_image_dir(file_path, prepared_data, out_path, mask_out_path=None):
                     image_data = base64.b64decode(mask)
                     with open(os.path.join(mask_out_path, image_name), 'wb') as output_file:
                         output_file.write(image_data)
-
+        frame_count += 1
     cap.release()
 
 
@@ -111,7 +110,7 @@ processed_frames = {"small": 0, 'ok': 0}
 
 
 def frame_process_condition(num, markup_path):
-    if (int(num) % PROCESS_FREQ == 1 and markup_path['x'] > 0 and markup_path['y'] > 0
+    if ((PROCESS_FREQ < 2 or int(num) % PROCESS_FREQ == 1) and markup_path['x'] > 0 and markup_path['y'] > 0
             and markup_path['width'] > min_width and markup_path['height'] > min_height):
         if markup_path['width'] < 50 or markup_path['height'] < 100:
             processed_frames["small"] += 1

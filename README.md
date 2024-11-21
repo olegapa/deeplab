@@ -12,11 +12,11 @@ docker build -t deeplab-image .
 You need to run the container and mount all of the necessary directories. As an input_data parameter it is possible to pass parameters in json format, 
 for now, only parameter "frame_frequency" is supported. Example how to launch inference:
 ```
-sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./video_1:/input -v ./weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output_3:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./input_data:/input_data -it --rm deeplab-image --input_data 123 --host_web "http://127.0.0.1:5555"
+sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./video_1:/input -v ./fashionpedia_weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output_3:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./input_data:/input_data -it --rm deeplab-image --input_data '{"frame_frequency": "10"}' --host_web "http://127.0.0.1:5555"
 ```
 Example how to launch training:
 ```
-sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./video_1:/input -v ./weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output_training:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./input_data_training:/input_data -it --rm deeplab-image --input_data 123 --host_web "http://127.0.0.1:5555" --work_format
+sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./video_1:/input -v ./weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output_training:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./input_data_training:/input_data -it --rm deeplab-image --input_data "" --host_web "http://127.0.0.1:5555" --work_format
 ```
 
 Apart from default keys: input_data and --work_format_training (flag that marks training mode)
