@@ -13,7 +13,7 @@ from tqdm import tqdm
 from torch.nn import functional as F
 import logging
 
-from container_status import ContainerStatus as CS
+# from container_status import ContainerStatus as CS
 
 # Настройка логгера
 logging.basicConfig(level=logging.INFO, filename='/output/training.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
@@ -21,32 +21,32 @@ logger = logging.getLogger(__name__)
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-parser = argparse.ArgumentParser(description="Process some images.")
+# parser = argparse.ArgumentParser(description="Process some images.")
 
 # Добавляем аргументы
-parser.add_argument('--image_path', type=str, required=True, help='Path to the input image')
-parser.add_argument('--mask_path', type=str, help='Path to the mask image')
-parser.add_argument('--model_path', type=str, help='Path to the input image')
-parser.add_argument('--output_weights', type=str, help='Path to the input image')
-parser.add_argument("--host_web", type=str, help="url host with web")
-
-# Парсим аргументы
-args = parser.parse_args()
-
-# Получаем значения аргументов
-image_path = args.image_path
-mask_path = args.mask_path
-model_path = args.model_path
-output_weights = args.output_weights
-cs = CS(args.host_web, logger)
+# parser.add_argument('--image_path', type=str, required=True, help='Path to the input image')
+# parser.add_argument('--mask_path', type=str, help='Path to the mask image')
+# parser.add_argument('--model_path', type=str, help='Path to the input image')
+# parser.add_argument('--output_weights', type=str, help='Path to the input image')
+# parser.add_argument("--host_web", type=str, help="url host with web")
+#
+# # Парсим аргументы
+# args = parser.parse_args()
+#
+# # Получаем значения аргументов
+# image_path = args.image_path
+# mask_path = args.mask_path
+# model_path = args.model_path
+# output_weights = args.output_weights
+# cs = CS(args.host_web, logger)
 
 
 class CustomSegmentationDataset(Dataset):
-    def __init__(self, transformations=None):
+    def __init__(self, image_path, mask_path, transformations=None):
         self.im_paths = sorted(glob(f"{image_path}/*"))
         self.gt_paths = sorted(glob(f"{mask_path}/*"))
         self.transformations = transformations
-        self.n_cls = 19  # количество новых классов
+        self.n_cls = 18  # количество новых классов
 
         assert len(self.im_paths) == len(self.gt_paths)
 
@@ -73,31 +73,9 @@ class CustomSegmentationDataset(Dataset):
         return transformed["image"], transformed["mask"]
 
 
-def get_dls(transformations, bs, split=[0.95, 0.05], ns=4):
-    assert sum(split) == 1., "Sum of the split must be exactly 1"
-
-    ds = CustomSegmentationDataset(transformations=transformations)
-    n_cls = ds.n_cls
-
-    tr_len = int(len(ds) * split[0])
-    val_len = len(ds) - tr_len
-
-    # Data split
-    tr_ds, val_ds = torch.utils.data.random_split(ds, [tr_len, val_len])
-
-    logger.info(f"\nThere are {len(tr_ds)} number of images in the train set")
-    logger.info(f"There are {len(val_ds)} number of images in the validation set")
-
-    # Get dataloaders
-    tr_dl = DataLoader(dataset=tr_ds, batch_size=bs, shuffle=True, num_workers=ns)
-    val_dl = DataLoader(dataset=val_ds, batch_size=bs, shuffle=False, num_workers=ns)
-
-    return tr_dl, val_dl, n_cls
-
-
 class Metrics:
 
-    def __init__(self, pred, gt, loss_fn, eps=1e-10, n_cls=19):
+    def __init__(self, pred, gt, loss_fn, eps=1e-10, n_cls=18):
 
         self.pred, self.gt = torch.argmax(pred, dim=1), gt.squeeze(1)  # (batch, width, height)
         self.loss_fn, self.eps, self.n_cls, self.pred_ = loss_fn, eps, n_cls, pred
@@ -117,9 +95,11 @@ class Metrics:
         with torch.no_grad():
 
             pred, gt = self.to_contiguous(self.pred), self.to_contiguous(self.gt)
-
+            # print(f'pred = {pred}')
+            # logger.info(f'pred = {pred}')
             iou_per_class = []
-            logger.info(self.n_cls)
+            # logger.info(f'n_cls= {self.n_cls}')
+            # print(self.n_cls)
             for c in range(self.n_cls):
                 match_pred = pred == c
                 match_gt = gt == c
@@ -141,136 +121,173 @@ class Metrics:
         return self.loss_fn(self.pred_, self.gt.long())
 
 
-def tic_toc(start_time=None):
-    return time.time() if start_time == None else time.time() - start_time
+class DeeplabTraining:
 
+    def __init__(self, image_path=None,
+                 mask_path=None,
+                 model_path=None,
+                 output_weights=None,
+                 n_cls=18):
+        self.image_path = image_path
+        self.mask_path = mask_path
+        self.model_path = model_path
+        self.output_weights = output_weights
+        self.n_cls=n_cls
 
-def train(model, tr_dl, val_dl, loss_fn, opt, device, epochs, save_prefix, threshold=0.005, save_path="saved_models"):
-    tr_loss, tr_pa, tr_iou = [], [], []
-    val_loss, val_pa, val_iou = [], [], []
-    tr_len, val_len = len(tr_dl), len(val_dl)
-    best_loss, decrease, not_improve, early_stop_threshold = np.inf, 1, 0, 5
-    os.makedirs(save_path, exist_ok=True)
+    def get_dls(self, transformations, bs, split=[0.95, 0.05], ns=4):
+        assert sum(split) == 1., "Sum of the split must be exactly 1"
 
-    model.to(device)
-    train_start = tic_toc()
-    logger.info("Start training process...")
+        ds = CustomSegmentationDataset(transformations=transformations, image_path=self.image_path, mask_path=self.mask_path)
+        n_cls = ds.n_cls
 
-    for epoch in range(1, epochs + 1):
-        tic = tic_toc()
-        tr_loss_, tr_iou_, tr_pa_ = 0, 0, 0
-        cs.post_progress('{:.2%}'.format(epoch / epochs))
+        tr_len = int(len(ds) * split[0])
+        val_len = len(ds) - tr_len
 
-        model.train()
-        logger.info(f"Epoch {epoch} train process is started...")
-        for idx, batch in enumerate(tqdm(tr_dl)):
-            ims, gts = batch
-            ims, gts = ims.to(device), gts.to(device)
+        # Data split
+        tr_ds, val_ds = torch.utils.data.random_split(ds, [tr_len, val_len])
 
-            preds = model(ims)
+        logger.info(f"\nThere are {len(tr_ds)} number of images in the train set")
+        logger.info(f"There are {len(val_ds)} number of images in the validation set")
 
-            met = Metrics(preds, gts, loss_fn, n_cls=n_cls)
-            loss_ = met.loss()
+        # Get dataloaders
+        tr_dl = DataLoader(dataset=tr_ds, batch_size=bs, shuffle=True, num_workers=ns)
+        val_dl = DataLoader(dataset=val_ds, batch_size=bs, shuffle=False, num_workers=ns)
 
-            tr_iou_ += met.mIoU()
+        return tr_dl, val_dl, n_cls
 
-            tr_pa_ += met.PA()
-            tr_loss_ += loss_.item()
+    def tic_toc(self, start_time=None):
+        return time.time() if start_time == None else time.time() - start_time
 
-            loss_.backward()
-            opt.step()
-            opt.zero_grad()
+    def train(self, model, tr_dl, val_dl, loss_fn, opt, device, epochs, save_prefix, threshold=0.005, save_path="saved_models"):
+        tr_loss, tr_pa, tr_iou = [], [], []
+        val_loss, val_pa, val_iou = [], [], []
+        tr_len, val_len = len(tr_dl), len(val_dl)
+        best_loss, decrease, not_improve, early_stop_threshold = np.inf, 1, 0, 5
+        os.makedirs(save_path, exist_ok=True)
 
-        logger.info(f"Epoch {epoch} validation process is started...")
-        model.eval()
-        val_loss_, val_iou_, val_pa_ = 0, 0, 0
+        model.to(device)
+        train_start = self.tic_toc()
+        logger.info("Start training process...")
 
-        with torch.no_grad():
-            for idx, batch in enumerate(tqdm(val_dl)):
+        for epoch in range(1, epochs + 1):
+            tic = self.tic_toc()
+            tr_loss_, tr_iou_, tr_pa_ = 0, 0, 0
+            # cs.post_progress('{:.2%}'.format(epoch / epochs))
+
+            model.train()
+            logger.info(f"Epoch {epoch} train process is started...")
+            for idx, batch in enumerate(tqdm(tr_dl)):
                 ims, gts = batch
                 ims, gts = ims.to(device), gts.to(device)
 
                 preds = model(ims)
 
-                met = Metrics(preds, gts, loss_fn, n_cls=n_cls)
+                met = Metrics(preds, gts, loss_fn, n_cls=self.n_cls)
+                loss_ = met.loss()
 
-                val_loss_ += met.loss().item()
-                val_iou_ += met.mIoU()
-                val_pa_ += met.PA()
+                tr_iou_ += met.mIoU()
 
-        logger.info(f"Epoch {epoch} train process is completed.")
+                tr_pa_ += met.PA()
+                tr_loss_ += loss_.item()
 
-        tr_loss_ /= tr_len
-        tr_iou_ /= tr_len
-        tr_pa_ /= tr_len
+                loss_.backward()
+                opt.step()
+                opt.zero_grad()
 
-        val_loss_ /= val_len
-        val_iou_ /= val_len
-        val_pa_ /= val_len
+            logger.info(f"Epoch {epoch} validation process is started...")
+            model.eval()
+            val_loss_, val_iou_, val_pa_ = 0, 0, 0
 
-        logger.info("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        logger.info(f"\nEpoch {epoch} train process results: \n")
-        logger.info(f"Train Time         -> {tic_toc(tic):.3f} secs")
-        logger.info(f"Train Loss         -> {tr_loss_:.3f}")
-        logger.info(f"Train PA           -> {tr_pa_:.3f}")
-        logger.info(f"Train IoU          -> {tr_iou_:.3f}")
-        logger.info(f"Validation Loss    -> {val_loss_:.3f}")
-        logger.info(f"Validation PA      -> {val_pa_:.3f}")
-        logger.info(f"Validation IoU     -> {val_iou_:.3f}\n")
+            with torch.no_grad():
+                for idx, batch in enumerate(tqdm(val_dl)):
+                    ims, gts = batch
+                    ims, gts = ims.to(device), gts.to(device)
 
-        tr_loss.append(tr_loss_)
-        tr_iou.append(tr_iou_)
-        tr_pa.append(tr_pa_)
+                    preds = model(ims)
 
-        val_loss.append(val_loss_)
-        val_iou.append(val_iou_)
-        val_pa.append(val_pa_)
+                    met = Metrics(preds, gts, loss_fn, n_cls=self.n_cls)
 
-        if best_loss > (val_loss_ + threshold):
-            logger.info(f"Loss decreased from {best_loss:.3f} to {val_loss_:.3f}!")
-            best_loss = val_loss_
-            decrease += 1
-            if decrease % 2 == 0:
-                logger.info("Saving the model with the best loss value...")
-                os.makedirs('/'.join(model_path.split('/')[0:-1]), exist_ok=True)
-                torch.save(model, f"{output_weights}")
+                    val_loss_ += met.loss().item()
+                    val_iou_ += met.mIoU()
+                    val_pa_ += met.PA()
+
+            logger.info(f"Epoch {epoch} train process is completed.")
+
+            tr_loss_ /= tr_len
+            tr_iou_ /= tr_len
+            tr_pa_ /= tr_len
+
+            val_loss_ /= val_len
+            val_iou_ /= val_len
+            val_pa_ /= val_len
+
+            logger.info("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            logger.info(f"\nEpoch {epoch} train process results: \n")
+            logger.info(f"Train Time         -> {self.tic_toc(tic):.3f} secs")
+            logger.info(f"Train Loss         -> {tr_loss_:.3f}")
+            logger.info(f"Train PA           -> {tr_pa_:.3f}")
+            logger.info(f"Train IoU          -> {tr_iou_:.3f}")
+            logger.info(f"Validation Loss    -> {val_loss_:.3f}")
+            logger.info(f"Validation PA      -> {val_pa_:.3f}")
+            logger.info(f"Validation IoU     -> {val_iou_:.3f}\n")
+
+            tr_loss.append(tr_loss_)
+            tr_iou.append(tr_iou_)
+            tr_pa.append(tr_pa_)
+
+            val_loss.append(val_loss_)
+            val_iou.append(val_iou_)
+            val_pa.append(val_pa_)
+
+            if best_loss > (val_loss_ + threshold):
+                logger.info(f"Loss decreased from {best_loss:.3f} to {val_loss_:.3f}!")
+                best_loss = val_loss_
+                decrease += 1
+                if decrease % 2 == 0:
+                    logger.info("Saving the model with the best loss value...")
+                    os.makedirs('/'.join(self.output_weights.split('/')[0:-1]), exist_ok=True)
+                    torch.save(model, f"{self.output_weights}")
 
 
-        else:
-            not_improve += 1
-            best_loss = val_loss_
-            logger.info(f"Loss did not decrease for {not_improve} epoch(s)!")
-            if not_improve == early_stop_threshold:
-                logger.info(
-                    f"Stopping training process becuase loss value did not decrease for {early_stop_threshold} epochs!")
-                break
-        logger.info("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+            else:
+                not_improve += 1
+                best_loss = val_loss_
+                logger.info(f"Loss did not decrease for {not_improve} epoch(s)!")
+                if not_improve == early_stop_threshold:
+                    logger.info(
+                        f"Stopping training process becuase loss value did not decrease for {early_stop_threshold} epochs!")
+                    break
+            logger.info("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
 
-    logger.info(f"Train process is completed in {(tic_toc(train_start)) / 60:.3f} minutes.")
+        logger.info(f"Train process is completed in {(self.tic_toc(train_start)) / 60:.3f} minutes.")
 
-    return {"tr_loss": tr_loss, "tr_iou": tr_iou, "tr_pa": tr_pa,
-            "val_loss": val_loss, "val_iou": val_iou, "val_pa": val_pa}
-
-
-def load_model(n_cls):
-    if model_path:
-        if os.path.exists(model_path):
-            return torch.load(f"{model_path}")
-    return smp.DeepLabV3Plus(classes=n_cls)
+        return {"tr_loss": tr_loss, "tr_iou": tr_iou, "tr_pa": tr_pa,
+                "val_loss": val_loss, "val_iou": val_iou, "val_pa": val_pa}
 
 
-mean, std, im_h, im_w = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 256, 256
-trans = A.Compose([A.Resize(im_h, im_w), A.augmentations.transforms.Normalize(mean=mean, std=std),
-                   ToTensorV2(transpose_mask=True)])
-device = "cuda" if torch.cuda.is_available() else "cpu"
+    def load_model(self, n_cls):
+        if self.model_path:
+            if os.path.exists(self.model_path):
+                return torch.load(f"{self.model_path}")
+        return smp.DeepLabV3Plus(classes=n_cls)
 
-tr_dl, val_dl, n_cls = get_dls(transformations=trans, split=[0.95, 0.05], bs=32)
+    def run(self, image_path, mask_path, model_path, output_weights):
+        self.image_path, self.mask_path, self.model_path, self.output_weights = image_path, mask_path, model_path, output_weights
+        mean, std, im_h, im_w = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 256, 256
+        trans = A.Compose([A.Resize(im_h, im_w), A.augmentations.transforms.Normalize(mean=mean, std=std),
+                           ToTensorV2(transpose_mask=True)])
+        device = "cuda" if torch.cuda.is_available() else "cpu"
 
-model = load_model(n_cls)
+        tr_dl, val_dl, self.n_cls = self.get_dls(transformations=trans, split=[0.95, 0.05], bs=32)
 
-loss_fn = torch.nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(params=model.parameters(), lr=3e-4)
+        model = self.load_model(self.n_cls)
 
-history = train(model=model, tr_dl=tr_dl, val_dl=val_dl,
-                loss_fn=loss_fn, opt=optimizer, device=device,
-                epochs=50, save_prefix="clothing")
+        loss_fn = torch.nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(params=model.parameters(), lr=3e-4)
+
+        history = self.train(model=model, tr_dl=tr_dl, val_dl=val_dl,
+                        loss_fn=loss_fn, opt=optimizer, device=device,
+                        epochs=50, save_prefix="clothing")
+
+
+    #python run_train.py --image_path /output/images --mask_path /output/masks --output_weights /output/deeplab_weights.pt --host_web ""

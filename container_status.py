@@ -1,15 +1,15 @@
-import logging
 import socket
 import subprocess
 import requests
+import logging
 from urllib.parse import urljoin
-
 
 
 class ContainerStatus():
 
     def __init__(self, host_web, logger: logging):
         self.host_web = host_web
+        self.logger = logger
         self.short_id = None
         self.full_id = None
         self.get_id()
@@ -19,15 +19,17 @@ class ContainerStatus():
                        '/events/{}/on_error',
                        # Вызывается в случае возникновения ошибки в процессе обработки данных в контейнере
                        '/events/{}/before_end']  # Вызывается после окончания обработки данных в контейнере и сохранением выходных файлов в папке OUT_DIR и перед остановкой (удалением) контейнера
-        self.logger = logger
 
     def get_short_id(self):
-        '''Получение краткого id контейнера, как имя хоста
+        '''Получение краткого id контейнера
+        Args:	-
+        Return:	-
         '''
         self.short_id = socket.gethostname()
 
     def get_containers_from_docker(self) -> dict:
-        '''Получение списка активных контейнеров от docker
+        '''Получение списка активных контейнеров от docker host
+        Args:	-
         Return: словарь вида full_id:name
         '''
         result = subprocess.check_output('docker ps --format "{{.ID}}: {{.Names}}" --no-trunc', shell=True).decode(
@@ -39,8 +41,10 @@ class ContainerStatus():
                 containers[key] = value
         return containers
 
-    def get_id(self, full=True):
+    def get_id(self, full: bool = True):
         '''Получение полного id контейнера
+        Args:	full - флаг для получения полного id контейнера
+        Return:	-
         '''
         self.get_short_id()
         if full:
@@ -50,53 +54,58 @@ class ContainerStatus():
                     self.full_id = id_
                     break
 
-    def post(self, url, data=None):
+    def post(self, url: str, data: dict = {}):
         '''Шаблон post запроса
+        Args:	data - сообщение в формате json, данны для отправки
         Return: ответ на запрос
         '''
-        # print(url)
         res = {}
         try:
-            res = requests.post(url, data)
+            if self.host_web != '':
+                res = requests.post(url, json=data)
         except Exception as e:
-            print("Error: " + str(e))
-            self.logger.error(f"Can't send request to {url}, the error is: {str(e)}")
-            res = {}
+            self.logger.info("Error: " + str(e))
         finally:
             return res
 
-    def post_status(self, status):
+    def post_status(self, status: int, data: dict = None):
         '''Шаблон post запроса со статусом
+        Args: 	status - № статуса из events,
+                data - сообщение в формате json, данны для отправки
         Return: ответ на запрос
         '''
-        return self.post(urljoin(self.host_web, self.events[status].format(self.full_id)))
+        return self.post(urljoin(self.host_web, self.events[status].format(self.full_id)), data)
 
-    def post_start(self):
+    def post_start(self, data: dict = None):
         '''Шаблон post запроса со статусом before_start
+        Args: 	data - см. camino-ann-events_v2.md
         Return: ответ на запрос
         '''
-        return self.post_status(0)
+        return self.post_status(0, data)
 
-    def post_progress(self, progress):
+    def post_progress(self, data=None):
         '''Шаблон post запроса со статусом on_progress
+        Args: 	data - см. camino-ann-events_v2.md
         Return: ответ на запрос
         '''
-        return self.post_status(1)
+        return self.post_status(1, data)
 
-    def post_error(self):
+    def post_error(self, data=None):
         '''Шаблон post запроса со статусом on_error
+        Args: 	data - см. camino-ann-events_v2.md
         Return: ответ на запрос
         '''
-        return self.post_status(2)
+        return self.post_status(2, data)
 
-    def post_end(self):
+    def post_end(self, data=None):
         '''Шаблон post запроса со статусом before_end
+        Args: 	data - см. camino-ann-events_v2.md
         Return: ответ на запрос
         '''
-        return self.post_status(3)
+        return self.post_status(3, data)
 
 
-def get_id():
+def get_id() -> str:
     '''Получение полного id контейнера
     '''
     full_id = ""

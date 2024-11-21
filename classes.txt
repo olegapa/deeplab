@@ -17,3 +17,5 @@
 16. Blazer/Suit - blazer, suit
 17. Underwear/Swim - intimate, panties, swimwear, bra
 18. Socks/Stockings - socks, stocklings
+
+python entrypoint.py --input_data 123 --host_web 123 --demo_mode

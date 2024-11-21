@@ -14,34 +14,35 @@ import segmentation_models_pytorch as smp, time
 from tqdm import tqdm
 from torch.nn import functional as F
 
-from container_status import ContainerStatus as CS
+# from container_status import ContainerStatus as CS
+from progress_counter import ProgressCounter
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 logging.basicConfig(level=logging.INFO, filename='/output/deeplab.log', format='%(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-parser = argparse.ArgumentParser(description="Process some images.")
+# parser = argparse.ArgumentParser(description="Process some images.")
 
 # Добавляем аргументы
-parser.add_argument('--image_path', type=str, required=True, help='Path to the input image')
-parser.add_argument('--mask_path', type=str, help='Path to the mask image')
-parser.add_argument('--output_path', type=str, required=True, help='Path to the input image')
-parser.add_argument('--model_path', type=str, required=True, help='Path to the input image')
-parser.add_argument('--class_info_path', help='Path to the output class info file')
-parser.add_argument("--demo_mode", action="store_true", help="Flag for demo mode")
-parser.add_argument("--host_web", type=str, help="url host with web")
+# parser.add_argument('--image_path', type=str, required=True, help='Path to the input image')
+# parser.add_argument('--mask_path', type=str, help='Path to the mask image')
+# parser.add_argument('--output_path', type=str, required=True, help='Path to the input image')
+# parser.add_argument('--model_path', type=str, required=True, help='Path to the input image')
+# parser.add_argument('--class_info_path', help='Path to the output class info file')
+# parser.add_argument("--demo_mode", action="store_true", help="Flag for demo mode")
+# parser.add_argument("--host_web", type=str, help="url host with web")
 
 # Парсим аргументы
-args = parser.parse_args()
+# args = parser.parse_args()
 
 # Получаем значения аргументов
-image_path = args.image_path
-mask_path = args.mask_path
-output_path = args.output_path
-model_path = args.model_path
-class_info_path = args.class_info_path
-demo_mode = args.demo_mode
-cs = CS(args.host_web, logger)
+# image_path = args.image_path
+# mask_path = args.mask_path
+# output_path = args.output_path
+# model_path = args.model_path
+# class_info_path = args.class_info_path
+# demo_mode = args.demo_mode
+# cs = CS(args.host_web, logger)
 
 color_mapping = {
     0: (0, 0, 0),  # Background
@@ -62,15 +63,14 @@ color_mapping = {
     15: (192, 128, 128),  # Gloves
     16: (0, 64, 0),  # Blazer/Suit
     17: (128, 64, 0),  # Underwear/Swim
-    18: (0, 192, 0)  # Socks/Stockings
 }
 
 
 class CustomSegmentationDataset(Dataset):
-    def __init__(self, transformations=None):
+    def __init__(self, image_path, transformations=None):
         self.im_paths = sorted(glob(f"{image_path}/*"))
         self.transformations = transformations
-        self.n_cls = 19  # количество новых классов
+        self.n_cls = 18  # количество новых классов
 
     def __len__(self):
         return len(self.im_paths)
@@ -95,108 +95,122 @@ class CustomSegmentationDataset(Dataset):
         return transformed["image"]
 
 
-def get_dls(transformations, split=[0, 1], ns=4):
-    assert sum(split) == 1., "Sum of the split must be exactly 1"
+class DeeplabInference:
+    def __init__(self, image_path=None,
+                 output_path=None,
+                 model_path=None,
+                 class_info_path=None,
+                 demo_mode=False,
+                 counter=None):
+        self.image_path = image_path
+        self.output_path = output_path
+        self.model_path = model_path
+        self.class_info_path = class_info_path
+        self.demo_mode = demo_mode
+        self.counter = counter
 
-    ds = CustomSegmentationDataset(transformations=transformations)
-    n_cls = ds.n_cls
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = torch.load(f"{self.model_path}")
+        self.model.eval()
+        self.model = self.model.to(self.device)
 
-    val_len = int(len(ds) * split[0])
-    test_len = len(ds) - (val_len)
+    def get_dls(self, transformations, split=[0, 1], ns=4):
+        assert sum(split) == 1., "Sum of the split must be exactly 1"
 
-    # Data split
-    val_ds, test_ds = torch.utils.data.random_split(ds, [val_len, test_len])
+        ds = CustomSegmentationDataset(transformations=transformations, image_path=self.image_path)
+        n_cls = ds.n_cls
 
-    print(f"There are {len(val_ds)} number of images in the validation set")
-    print(f"There are {len(test_ds)} number of images in the test set\n")
+        val_len = int(len(ds) * split[0])
+        test_len = len(ds) - (val_len)
 
-    test_d = DataLoader(dataset=test_ds, batch_size=1, shuffle=False, num_workers=ns)
+        # Data split
+        val_ds, test_ds = torch.utils.data.random_split(ds, [val_len, test_len])
 
-    return test_d, n_cls
+        print(f"There are {len(val_ds)} number of images in the validation set")
+        print(f"There are {len(test_ds)} number of images in the test set\n")
 
+        test_d = DataLoader(dataset=test_ds, batch_size=1, shuffle=False, num_workers=ns)
 
-mean, std, im_h, im_w = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 256, 256
-trans = A.Compose([A.Resize(im_h, im_w), A.augmentations.transforms.Normalize(mean=mean, std=std),
-                   ToTensorV2(transpose_mask=True)])
-device = "cuda" if torch.cuda.is_available() else "cpu"
+        return test_d, n_cls
 
-test_dl, n_cls = get_dls(transformations=trans, split=[0, 1])
+    def inference(self, dl, model, device):
+        os.makedirs(self.output_path, exist_ok=True)
+        if self.demo_mode:
+            colored_output_path = f"{self.output_path}_colored"
+            polygonized_output_path = f"{self.output_path}_polygonized_mask"
+            os.makedirs(colored_output_path, exist_ok=True)
+            os.makedirs(polygonized_output_path, exist_ok=True)
 
+        labels_dict = {}
+        polygons_dict = {}
+        total = len(dl)
 
-def inference(dl, model, device):
-    os.makedirs(output_path, exist_ok=True)
-    if demo_mode:
-        colored_output_path = f"{output_path}_colored"
-        polygonized_output_path = f"{output_path}_polygonized_mask"
-        os.makedirs(colored_output_path, exist_ok=True)
-        os.makedirs(polygonized_output_path, exist_ok=True)
+        for idx, (im, orig_size, save_name) in enumerate(dl):
+            if idx % 1000 == 0 and self.counter:
+                self.counter.report_status(1000)
+            # if idx % 1000 == 0:
+                # cs.post_progress('{:.2%}'.format(idx / total))
+            im = im.to(device)
 
-    labels_dict = {}
-    polygons_dict = {}
-    total = len(dl)
+            # Get predicted mask
+            with torch.no_grad():
+                pred = torch.argmax(model(im.to(device)), dim=1).squeeze(0).cpu().numpy()
 
-    for idx, (im, orig_size, save_name) in enumerate(dl):
-        if idx % 1000 == 0:
-            cs.post_progress('{:.2%}'.format(idx / total))
-        im = im.to(device)
+            # Convert prediction to an image and save
+            pred_img = Image.fromarray(pred.astype(np.uint8))
+            pred_img = pred_img.resize(orig_size, resample=Image.NEAREST)
+            pred_img.save(os.path.join(self.output_path, save_name[0].split('/')[-1]))
 
-        # Get predicted mask
-        with torch.no_grad():
-            pred = torch.argmax(model(im.to(device)), dim=1).squeeze(0).cpu().numpy()
+            if self.demo_mode:
+                colored_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
+                polygonized_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
 
-        # Convert prediction to an image and save
-        pred_img = Image.fromarray(pred.astype(np.uint8))
-        pred_img = pred_img.resize(orig_size, resample=Image.NEAREST)
-        pred_img.save(os.path.join(output_path, save_name[0].split('/')[-1]))
+            detected_classes = set()
+            polygons_per_image = {}
 
-        if demo_mode:
-            colored_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
-            polygonized_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
+            for label, color in color_mapping.items():
+                mask = (pred == label).astype(np.uint8)
+                if np.any(mask):
+                    detected_classes.add(label)
 
-        detected_classes = set()
-        polygons_per_image = {}
+                    # Находим контуры (полигоны) на маске
+                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    polygons_per_image[label] = [contour.squeeze().tolist() for contour in contours]
 
-        for label, color in color_mapping.items():
-            mask = (pred == label).astype(np.uint8)
-            if np.any(mask):
-                detected_classes.add(label)
+                    if self.demo_mode:
+                        # Окрашиваем оригинальную маску
+                        colored_pred[mask == 1] = color
 
-                # Находим контуры (полигоны) на маске
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                polygons_per_image[label] = [contour.squeeze().tolist() for contour in contours]
+                        # Рисуем полигоны на пустой маске
+                        cv2.drawContours(polygonized_pred, contours, -1, color, thickness=cv2.FILLED)
 
-                if demo_mode:
-                    # Окрашиваем оригинальную маску
-                    colored_pred[mask == 1] = color
+            polygons_dict[save_name[0].split('/')[-1]] = polygons_per_image
 
-                    # Рисуем полигоны на пустой маске
-                    cv2.drawContours(polygonized_pred, contours, -1, color, thickness=cv2.FILLED)
+            if self.demo_mode:
+                # Сохраняем исходную окрашенную маску
+                colored_pred_img = Image.fromarray(colored_pred)
+                colored_pred_img = colored_pred_img.resize(orig_size, resample=Image.NEAREST)
+                colored_pred_img.save(os.path.join(colored_output_path, save_name[0].split('/')[-1]))
 
-        polygons_dict[save_name[0].split('/')[-1]] = polygons_per_image
+                # Сохраняем маску, восстановленную по полигонам
+                polygonized_pred_img = Image.fromarray(polygonized_pred)
+                polygonized_pred_img = polygonized_pred_img.resize(orig_size, resample=Image.NEAREST)
+                polygonized_pred_img.save(os.path.join(polygonized_output_path, save_name[0].split('/')[-1]))
 
-        if demo_mode:
-            # Сохраняем исходную окрашенную маску
-            colored_pred_img = Image.fromarray(colored_pred)
-            colored_pred_img = colored_pred_img.resize(orig_size, resample=Image.NEAREST)
-            colored_pred_img.save(os.path.join(colored_output_path, save_name[0].split('/')[-1]))
+            labels_dict[save_name[0].split('/')[-1]] = ' '.join(map(str, detected_classes))
 
-            # Сохраняем маску, восстановленную по полигонам
-            polygonized_pred_img = Image.fromarray(polygonized_pred)
-            polygonized_pred_img = polygonized_pred_img.resize(orig_size, resample=Image.NEAREST)
-            polygonized_pred_img.save(os.path.join(polygonized_output_path, save_name[0].split('/')[-1]))
+        # Сохранение полигонов
+        with open(self.class_info_path, 'a', encoding='utf-8') as polygon_file:
+            json.dump(polygons_dict, polygon_file, ensure_ascii=False)  # Сохраняем полигоны в файл
 
-        labels_dict[save_name[0].split('/')[-1]] = ' '.join(map(str, detected_classes))
+        print(f"Saved all predicted masks and polygons in {self.output_path}")
 
-    # Сохранение полигонов
-    with open(class_info_path, 'a', encoding='utf-8') as polygon_file:
-        json.dump(polygons_dict, polygon_file, ensure_ascii=False)  # Сохраняем полигоны в файл
+    def run(self, image_directory, mask_directory, polygon_file):
+        self.image_path, self.output_path, self.class_info_path = image_directory, mask_directory, polygon_file
+        mean, std, im_h, im_w = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 256, 256
+        trans = A.Compose([A.Resize(im_h, im_w), A.augmentations.transforms.Normalize(mean=mean, std=std),
+                           ToTensorV2(transpose_mask=True)])
 
-    print(f"Saved all predicted masks and polygons in {output_path}")
+        test_dl, n_cls = self.get_dls(transformations=trans, split=[0, 1])
 
-
-model = torch.load(f"{model_path}")
-model.eval()
-model = model.to(device)
-optimizer = torch.optim.Adam(params=model.parameters(), lr=3e-4)
-
-inference(test_dl, model=model, device=device)
+        self.inference(test_dl, model=self.model, device=self.device)

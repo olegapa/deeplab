@@ -1,0 +1,18 @@
+0. Background
+1. "Shirt/Blouse"
+2. "top, t-shirt, sweatshirt", "Sweater"
+3. "cardigan", "jacket", "coat", "cape"
+4. "vest"
+5. "pants"
+6. "shorts"
+7. "skirt"
+8. "dress"
+9. "jumpsuit"
+10. "hat", "headband, head covering, hair accessory"
+11. "tie", "scarf"
+12. "glove"
+13. "leg warmer", "sock"
+14. "tights, stockings",
+15. "shoe"
+16. "bag, wallet"
+17. "umbrella"
