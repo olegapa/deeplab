@@ -36,7 +36,7 @@ INPUT_DATA_ARG = args.input_data
 MODEL_PATH = "/weights"
 
 DEMO_MODE = args.demo_mode
-INPUT_DATA = "/input_data"
+INPUT_DATA = "/markups"
 
 TEMP_ROOT = OUTPUT_PATH if DEMO_MODE else "temp_image_root"
 
@@ -242,6 +242,7 @@ for file in files_in_directory:
     total_images += (processed_frames["small"] + processed_frames["ok"])
     processed_frames["small"] = 0
     processed_frames["ok"] = 0
+    count += 1
 
 cs.post_progress({"stage": "1 из 2", "progress": 100})
 counter = ProgressCounter(total=total_images, processed=0, cs=cs, logger=logger)

@@ -1,6 +1,7 @@
 from container_status import ContainerStatus
 import logging
 
+
 class ProgressCounter:
     def __init__(self, total, processed, cs: ContainerStatus, logger: logging):
         self.total = total
