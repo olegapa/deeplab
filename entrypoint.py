@@ -34,6 +34,7 @@ OUTPUT_PATH = "/output"
 WORK_FORMAT_TRAINING = args.work_format_training
 INPUT_DATA_ARG = args.input_data
 MODEL_PATH = "/weights"
+INPUT = "/input"
 
 DEMO_MODE = args.demo_mode
 INPUT_DATA = "/markups"
@@ -159,7 +160,7 @@ def verify_file_name(postfix_name, common_name):
     tail1 = '.'.join(postfix_tail.split('.')[0:-1])
     _, tail2 = os.path.split(common_name)
     logger.info(f"comparing {tail1} and {tail2}")
-    return tail1 == tail2
+    return tail1 == f'IN_{tail2}'
 
 
 files_in_directory = [
@@ -208,7 +209,8 @@ for file in files_in_directory:
     for item in json_data['files']:
         prepared_data = dict()
         video_path = item.get('file_name', "no_video")
-        if not os.path.isfile(f'/input/{video_path}'):
+        _, video_path = os.path.split(video_path)
+        if not os.path.isfile(f'{INPUT}/{video_path}'):
             logger.warning(f"File name {video_path} doesn't exist - it is skipped")
             continue
         if not verify_file_name(file, video_path):
@@ -228,7 +230,7 @@ for file in files_in_directory:
                     prepared_data[frame_num][chain_name] = frame["markup_path"]
         if not prepared_data:
             continue
-        prepare_image_dir(f'/input/{video_path}', prepared_data, im_dir, mask_dir)
+        prepare_image_dir(f'{INPUT}/{video_path}', prepared_data, im_dir, mask_dir)
     logger.info(f'Data preparation took {time.time() - start_time} seconds')
     logger.info(f'Amount of small images (with height < 100 or width < 50): {processed_frames["small"]} '
                 f'Amount of other images: {processed_frames["ok"]}. Total: {processed_frames["small"] + processed_frames["ok"]}')
