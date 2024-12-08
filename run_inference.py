@@ -175,7 +175,7 @@ class DeeplabInference:
 
                     # Находим контуры (полигоны) на маске
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    polygons_per_image[label] = [contour.squeeze().tolist() for contour in contours]
+                    polygons_per_image[label] = [contour.squeeze().flatten().tolist() for contour in contours]
 
                     if self.demo_mode:
                         # Окрашиваем оригинальную маску
@@ -192,8 +192,17 @@ class DeeplabInference:
                 colored_pred_img = colored_pred_img.resize(orig_size, resample=Image.NEAREST)
                 colored_pred_img.save(os.path.join(colored_output_path, save_name[0].split('/')[-1]))
 
+                restored_mask = np.zeros_like(polygonized_pred, dtype=np.uint8)
+
+                for label, polygons in polygons_per_image.items():
+                    for polygon in polygons:
+                        # Преобразуем плоский список координат обратно в массив точек
+                        points = np.array(polygon, dtype=np.int32).reshape(-1, 2)
+                        # Рисуем полигон на маске
+                        cv2.fillPoly(restored_mask, [points], label)
+
                 # Сохраняем маску, восстановленную по полигонам
-                polygonized_pred_img = Image.fromarray(polygonized_pred)
+                polygonized_pred_img = Image.fromarray(restored_mask)
                 polygonized_pred_img = polygonized_pred_img.resize(orig_size, resample=Image.NEAREST)
                 polygonized_pred_img.save(os.path.join(polygonized_output_path, save_name[0].split('/')[-1]))
 
