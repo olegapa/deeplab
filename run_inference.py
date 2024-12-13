@@ -193,8 +193,10 @@ class DeeplabInference:
                 colored_pred_img.save(os.path.join(colored_output_path, save_name[0].split('/')[-1]))
 
                 restored_mask = np.zeros_like(polygonized_pred, dtype=np.uint8)
+                # logger.info(f"shape = {restored_mask.shape} orig_size = {orig_size}")
 
                 for label, polygons in polygons_per_image.items():
+                    # logger.info(f'for {save_name[0].split("/")[-1]} class_id = {label}, poly_list = {polygons}')
                     for polygon in polygons:
                         # Преобразуем плоский список координат обратно в массив точек
                         points = np.array(polygon, dtype=np.int32).reshape(-1, 2)

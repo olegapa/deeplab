@@ -6,6 +6,7 @@ import time
 import cv2
 import logging
 import numpy as np
+from PIL import Image
 
 from container_status import ContainerStatus as CS
 from run_inference import DeeplabInference
@@ -101,19 +102,22 @@ def prepare_image_dir(file_path, prepared_data, out_path, mask_out_path=None):
                 cv2.imwrite(person_image_path, person_image)
                 if WORK_FORMAT_TRAINING:
                     polygons = bbox['polygons']
-                    restored_mask = np.zeros((width, height), dtype=np.uint8)
-
-                    for label, polygons in polygons.items():
-                        for polygon in polygons:
-                            # Преобразуем плоский список координат обратно в массив точек
-                            points = np.array(polygon, dtype=np.int32).reshape(-1, 2)
-                            # Рисуем полигон на маске
-                            cv2.fillPoly(restored_mask, [points], label)
+                    mask = np.zeros((256, 256), dtype=np.uint8)
+                    # logger.info(f"shape = {mask.shape} width height = {(width, height)}")
+                    for class_id, poly_list in polygons.items():
+                        # logger.info(f'for {image_name} class_id = {class_id}, poly_list = {poly_list}')
+                        for poly in poly_list:
+                            # Преобразуем список координат в массив точек формы (-1, 1, 2)
+                            points = np.array(poly, dtype=np.int32).reshape(-1, 2)
+                            # points = points[:, [1, 0]]
+                            # Заполняем область полигона на маске
+                            cv2.fillPoly(mask, [points], int(class_id))
 
                     # Сохраняем маску, восстановленную по полигонам
-                    polygonized_pred_img = Image.fromarray(restored_mask)
-                    polygonized_pred_img = polygonized_pred_img.resize(orig_size, resample=Image.NEAREST)
+                    polygonized_pred_img = Image.fromarray(mask)
+                    polygonized_pred_img = polygonized_pred_img.resize((width, height), resample=Image.NEAREST)
                     polygonized_pred_img.save(os.path.join(mask_out_path, image_name))
+                    # cv2.imwrite(os.path.join(mask_out_path, image_name), mask)
 
                     # with open(os.path.join(mask_out_path, image_name), 'wb') as output_file:
                     #     output_file.write(image_data)
@@ -171,17 +175,16 @@ def prepare_output(input_data, polygons_file, mask_dir):
                 frame_num = str(frame['markup_frame'])
                 file_name = get_image_name(video_path, frame_num, chain_name)
                 if frame_process_condition(frame_num, frame["markup_path"]):
-                    for pol in labels[file_name]:
-                        for cls, p in pol:
-                            chain['chain_markups'].append(
-                                {
-                                    'markup_parent_id': frame['markup_id'],
-                                    'markup_frame': frame['markup_frame'],
-                                    'markup_time': frame['markup_time'],
-                                    'markup_vector': frame['markup_vector'], # TODO: get vectors as they are needed
-                                    'chain_markups': {'class': cls, 'polygon': p}
-                                }
-                            )
+                    for cls, p in labels[file_name].items():
+                        chain['chain_markups'].append(
+                            {
+                                'markup_parent_id': frame['markup_id'],
+                                'markup_frame': frame['markup_frame'],
+                                'markup_time': frame['markup_time'],
+                                'markup_vector': frame['markup_vector'], # TODO: get vectors as they are needed
+                                'markup_path': {'class': cls, 'polygon': p}
+                            }
+                        )
     return input_data
 
 
