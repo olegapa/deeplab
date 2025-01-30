@@ -24,6 +24,8 @@ MASK_PATH = '/masks'
 MODEL_PATH = "/weights"
 OUTPUT_PATH = '/output'
 
+N_CLS = 9
+
 files_in_weights = [
     os.path.join(MODEL_PATH, f)
     for f in os.listdir(MODEL_PATH)
@@ -41,7 +43,7 @@ else:
     model_file = None
 
 if WORK_FORMAT_TRAINING:
-    deeplab = DeeplabTraining()
+    deeplab = DeeplabTraining(n_cls=N_CLS)
     deeplab.run(image_path=IMAGE_PATH, mask_path=MASK_PATH, model_path=model_file, output_weights=f'{OUTPUT_PATH}/deeplab_weights.pt')
 else:
     deeplab = DeeplabInference(model_path=model_file, demo_mode=DEMO_MODE, counter=None)

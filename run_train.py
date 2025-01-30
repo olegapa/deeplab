@@ -16,7 +16,8 @@ import logging
 # from container_status import ContainerStatus as CS
 
 # Настройка логгера
-logging.basicConfig(level=logging.INFO, filename='/output/training.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, filename='/output/training.log', filemode='w',
+                    format='%(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -39,6 +40,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # model_path = args.model_path
 # output_weights = args.output_weights
 # cs = CS(args.host_web, logger)
+N_CLS = 9
 
 
 class CustomSegmentationDataset(Dataset):
@@ -46,7 +48,7 @@ class CustomSegmentationDataset(Dataset):
         self.im_paths = sorted(glob(f"{image_path}/*"))
         self.gt_paths = sorted(glob(f"{mask_path}/*"))
         self.transformations = transformations
-        self.n_cls = 18  # количество новых классов
+        self.n_cls = N_CLS  # количество новых классов
 
         assert len(self.im_paths) == len(self.gt_paths)
 
@@ -54,7 +56,6 @@ class CustomSegmentationDataset(Dataset):
         return len(self.im_paths)
 
     def __getitem__(self, idx):
-
         im, gt = self.get_im_gt(self.im_paths[idx], self.gt_paths[idx])
         if self.transformations:
             im, gt = self.apply_transformations(im, gt)
@@ -75,7 +76,7 @@ class CustomSegmentationDataset(Dataset):
 
 class Metrics:
 
-    def __init__(self, pred, gt, loss_fn, eps=1e-10, n_cls=18):
+    def __init__(self, pred, gt, loss_fn, eps=1e-10, n_cls=N_CLS):
 
         self.pred, self.gt = torch.argmax(pred, dim=1), gt.squeeze(1)  # (batch, width, height)
         self.loss_fn, self.eps, self.n_cls, self.pred_ = loss_fn, eps, n_cls, pred
@@ -127,17 +128,18 @@ class DeeplabTraining:
                  mask_path=None,
                  model_path=None,
                  output_weights=None,
-                 n_cls=18):
+                 n_cls=N_CLS):
         self.image_path = image_path
         self.mask_path = mask_path
         self.model_path = model_path
         self.output_weights = output_weights
-        self.n_cls=n_cls
+        self.n_cls = n_cls
 
-    def get_dls(self, transformations, bs, split=[0.95, 0.05], ns=4):
+    def get_dls(self, transformations, bs, split=[0.85, 0.15], ns=4):
         assert sum(split) == 1., "Sum of the split must be exactly 1"
 
-        ds = CustomSegmentationDataset(transformations=transformations, image_path=self.image_path, mask_path=self.mask_path)
+        ds = CustomSegmentationDataset(transformations=transformations, image_path=self.image_path,
+                                       mask_path=self.mask_path)
         n_cls = ds.n_cls
 
         tr_len = int(len(ds) * split[0])
@@ -158,7 +160,8 @@ class DeeplabTraining:
     def tic_toc(self, start_time=None):
         return time.time() if start_time == None else time.time() - start_time
 
-    def train(self, model, tr_dl, val_dl, loss_fn, opt, device, epochs, save_prefix, threshold=0.005, save_path="saved_models"):
+    def train(self, model, tr_dl, val_dl, loss_fn, opt, device, epochs, save_prefix, threshold=0.005,
+              save_path="saved_models"):
         tr_loss, tr_pa, tr_iou = [], [], []
         val_loss, val_pa, val_iou = [], [], []
         tr_len, val_len = len(tr_dl), len(val_dl)
@@ -264,12 +267,11 @@ class DeeplabTraining:
         return {"tr_loss": tr_loss, "tr_iou": tr_iou, "tr_pa": tr_pa,
                 "val_loss": val_loss, "val_iou": val_iou, "val_pa": val_pa}
 
-
     def load_model(self, n_cls):
         if self.model_path:
             if os.path.exists(self.model_path):
-                return torch.load(f"{self.model_path}")
-        return smp.DeepLabV3Plus(classes=n_cls)
+                return torch.load(f"{self.model_path}", weights_only=False)
+        return smp.DeepLabV3Plus(classes=n_cls, encoder_name='resnet152')
 
     def run(self, image_path, mask_path, model_path, output_weights):
         self.image_path, self.mask_path, self.model_path, self.output_weights = image_path, mask_path, model_path, output_weights
@@ -278,7 +280,7 @@ class DeeplabTraining:
                            ToTensorV2(transpose_mask=True)])
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        tr_dl, val_dl, self.n_cls = self.get_dls(transformations=trans, split=[0.95, 0.05], bs=32)
+        tr_dl, val_dl, self.n_cls = self.get_dls(transformations=trans, split=[0.85, 0.15], bs=32)
 
         model = self.load_model(self.n_cls)
 
@@ -286,8 +288,7 @@ class DeeplabTraining:
         optimizer = torch.optim.Adam(params=model.parameters(), lr=3e-4)
 
         history = self.train(model=model, tr_dl=tr_dl, val_dl=val_dl,
-                        loss_fn=loss_fn, opt=optimizer, device=device,
-                        epochs=50, save_prefix="clothing")
-
+                             loss_fn=loss_fn, opt=optimizer, device=device,
+                             epochs=2, save_prefix="clothing")
 
     #python run_train.py --image_path /output/images --mask_path /output/masks --output_weights /output/deeplab_weights.pt --host_web ""

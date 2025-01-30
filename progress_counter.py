@@ -3,15 +3,17 @@ import logging
 
 
 class ProgressCounter:
-    def __init__(self, total, processed, cs: ContainerStatus, logger: logging):
+    def __init__(self, total, processed, cs: ContainerStatus, stage: int, max_stage: int, logger: logging):
         self.total = total
         self.cs = cs
         self.processed = processed
         self.logger = logger
+        self.stage = stage
+        self.max_stage = max_stage
 
     def report_status(self, report_amount, out_file=None, test_error=None, train_error=None):
         self.processed += report_amount
-        data = {"stage": "2 из 2", "progress": round(100*(self.processed / self.total), 2)}
+        data = {"stage": f"{self.stage} из {self.max_stage}", "progress": round(100*(self.processed / self.total), 2)}
         if out_file or test_error or train_error:
             data['statistics'] = dict()
             if out_file:

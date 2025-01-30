@@ -18,6 +18,10 @@ Example how to launch training:
 ```
 sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./video_1:/input -v ./weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output_training:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./input_data_training:/markups -it --rm deeplab-image --input_data "" --host_web "http://127.0.0.1:5555" --work_format
 ```
+New entrypoint start commands. Inference:
+```
+sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./new_videos:/input -v ./fashionpedia_weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./new_dl_inf_output:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./new_dl_inf_input:/markups -it --rm deeplab-image --input_data '{"weights": "deeplab_weights.pt"}' --host_web "http://127.0.0.1:5555"
+```
 
 Apart from default keys: input_data and --work_format_training (flag that marks training mode)
 there also --demo_mode flag for inference that allows to save output bounder boxes and masks images in output

@@ -247,7 +247,7 @@ for file in files_in_directory:
     count += 1
 
 cs.post_progress({"stage": "1 из 2", "progress": 100})
-counter = ProgressCounter(total=total_images, processed=0, cs=cs, logger=logger)
+counter = ProgressCounter(total=total_images, processed=0, cs=cs, logger=logger, stage=1, max_stage=1)
 deeplab = DeeplabTraining() if WORK_FORMAT_TRAINING else DeeplabInference(model_path=model_file, demo_mode=DEMO_MODE, counter=counter)
 cs.post_progress({"stage": "2 из 2", "progress": 0})
 

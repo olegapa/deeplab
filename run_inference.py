@@ -46,31 +46,33 @@ logger = logging.getLogger(__name__)
 
 color_mapping = {
     0: (0, 0, 0),  # Background
-    1: (128, 0, 0),  # Jacket/Coat
-    2: (0, 128, 0),  # Shirt/Blouse
-    3: (128, 128, 0),  # Sweater/Sweatshirt/Hoodie
-    4: (0, 0, 128),  # Dress/Romper
-    5: (128, 0, 128),  # Pants/Jeans/Leggings
-    6: (0, 128, 128),  # Shorts
-    7: (128, 128, 128),  # Skirt
-    8: (64, 0, 0),  # Shoes
-    9: (192, 0, 0),  # Vest
-    10: (64, 128, 0),  # Boots
-    11: (192, 128, 0),  # Bodysuit/T-shirt/Top
-    12: (64, 0, 128),  # Bag/Purse
-    13: (192, 0, 128),  # Hat
-    14: (64, 128, 128),  # Scarf/Tie
-    15: (192, 128, 128),  # Gloves
-    16: (0, 64, 0),  # Blazer/Suit
-    17: (128, 64, 0),  # Underwear/Swim
+    1: (128, 0, 0),  # Jacket/Coat| "Shirt/Blouse", "vest"
+    2: (0, 128, 0),  # Shirt/Blouse| "top, t-shirt, sweatshirt", "Sweater"
+    3: (128, 128, 0),  # Sweater/Sweatshirt/Hoodie| "cardigan", "jacket", "coat", "cape"
+    4: (0, 0, 128),  # Dress/Romper| "pants"
+    5: (128, 0, 128),  # Pants/Jeans/Leggings| "shorts", "skirt"
+    6: (0, 128, 128),  # Shorts| "dress", "jumpsuit"
+    7: (128, 128, 128),  # Skirt| "shoe"
+    8: (64, 0, 0),  # Shoes| "bag, wallet", "umbrella", "hat", "headband, head covering, hair accessory"
+    # 9: (192, 0, 0),  # Vest|
+    # 10: (64, 128, 0),  # Boots
+    # 11: (192, 128, 0),  # Bodysuit/T-shirt/Top
+    # 12: (64, 0, 128),  # Bag/Purse
+    # 13: (192, 0, 128),  # Hat
+    # 14: (64, 128, 128),  # Scarf/Tie
+    # 15: (192, 128, 128),  # Gloves
+    # 16: (0, 64, 0),  # Blazer/Suit
+    # 17: (128, 64, 0),  # Underwear/Swim
 }
+
+N_CLS = 9
 
 
 class CustomSegmentationDataset(Dataset):
     def __init__(self, image_path, transformations=None):
         self.im_paths = sorted(glob(f"{image_path}/*"))
         self.transformations = transformations
-        self.n_cls = 18  # количество новых классов
+        self.n_cls = N_CLS  # количество новых классов
 
     def __len__(self):
         return len(self.im_paths)
@@ -110,7 +112,7 @@ class DeeplabInference:
         self.counter = counter
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = torch.load(f"{self.model_path}")
+        self.model = torch.load(f"{self.model_path}", weights_only=False)
         self.model.eval()
         self.model = self.model.to(self.device)
 
@@ -134,6 +136,8 @@ class DeeplabInference:
         return test_d, n_cls
 
     def inference(self, dl, model, device):
+        # torch.set_printoptions(threshold=10000, edgeitems=30, precision=1, linewidth=1000, sci_mode=False)
+        # np.set_printoptions(threshold=10000, edgeitems=15, precision=1, linewidth=1000, suppress=True)
         os.makedirs(self.output_path, exist_ok=True)
         if self.demo_mode:
             colored_output_path = f"{self.output_path}_colored"
@@ -154,7 +158,15 @@ class DeeplabInference:
 
             # Get predicted mask
             with torch.no_grad():
-                pred = torch.argmax(model(im.to(device)), dim=1).squeeze(0).cpu().numpy()
+                # logger.info(f"model shape = {model(im.to(device)).shape}\n{model(im.to(device)).cpu().numpy()}")
+                # logger.info(f"After argmax: shape = {torch.argmax(model(im.to(device)), dim=1).shape}, argmax = {torch.argmax(model(im.to(device)), dim=1).cpu().numpy()}")
+                # logger.info(
+                #     f"softmax: shape = {torch.softmax(model(im.to(device)), dim=1).shape}, argmax = {torch.softmax(model(im.to(device)), dim=1).cpu().numpy()}")
+                pred = model(im.to(device))
+                probs = torch.softmax(pred, dim=1)
+                pred_for_score = torch.argmax(pred, dim=1)
+                pred = pred_for_score.squeeze(0).cpu().numpy()
+                # logger.info(f"pref shape = {pred.shape}\n{pred}")
 
             # Convert prediction to an image and save
             pred_img = Image.fromarray(pred.astype(np.uint8))
@@ -169,13 +181,27 @@ class DeeplabInference:
             polygons_per_image = {}
 
             for label, color in color_mapping.items():
+                # TODO: Delete it after training file with bboxes will appear
+                # if int(label) == 0:
+                #     continue
                 mask = (pred == label).astype(np.uint8)
+                score_mask = (pred_for_score == label)
+                # logger.info(mask)
+
                 if np.any(mask):
+                    class_probs = probs[:, label, :, :]
+                    class_sum = class_probs[score_mask].sum().item()  # сумма вероятностей
+                    # logger.info(f"probs shape = {probs.shape}, class_probs shape = {class_probs.shape}")
+                    # logger.info(f"class_probs[mask] = {class_probs[score_mask]}, shape =  {class_probs[score_mask].shape}")
+                    num_pixels = mask.sum().item()  # Количество пикселей класса
+                    # logger.info(f"class_sum = {class_sum}, num_pixels = {num_pixels}")
+                    score = class_sum / num_pixels if num_pixels > 0 else 0.0
+
                     detected_classes.add(label)
 
                     # Находим контуры (полигоны) на маске
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    polygons_per_image[label] = [contour.squeeze().flatten().tolist() for contour in contours]
+                    polygons_per_image[label] = {"score": score, "polygons": [contour.squeeze().flatten().tolist() for contour in contours]}
 
                     if self.demo_mode:
                         # Окрашиваем оригинальную маску
@@ -197,7 +223,7 @@ class DeeplabInference:
 
                 for label, polygons in polygons_per_image.items():
                     # logger.info(f'for {save_name[0].split("/")[-1]} class_id = {label}, poly_list = {polygons}')
-                    for polygon in polygons:
+                    for polygon in polygons["polygons"]:
                         # Преобразуем плоский список координат обратно в массив точек
                         points = np.array(polygon, dtype=np.int32).reshape(-1, 2)
                         # Рисуем полигон на маске

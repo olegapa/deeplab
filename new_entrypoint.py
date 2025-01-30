@@ -48,6 +48,7 @@ MASK_TEMP_PATH = f"{TEMP_ROOT}/masks"
 
 cs = CS(args.host_web, logger)
 cs.post_start()
+MAX_STAGE = 3 if WORK_FORMAT_TRAINING else 2
 # Необязательные параметры на ограничения изображений
 if args.min_width:
     min_width = int(args.min_width)
@@ -60,9 +61,31 @@ else:
 if INPUT_DATA_ARG:
     json_input_arg = json.loads(INPUT_DATA_ARG.replace("'", "\""))
     PROCESS_FREQ = int(json_input_arg.get("frame_frequency", 1))
-else:
-    PROCESS_FREQ = 1
+    WEIGHTS_FILENAME = json_input_arg.get("weights", None)
 
+    if not WEIGHTS_FILENAME:
+        if not WORK_FORMAT_TRAINING:
+            logger.error("No weights file were specified for inference")
+            cs.post_progress(
+                {"stage": f"1 из {MAX_STAGE}", "progress": 0, "statistics": {"test_error": "No weights file were specified for inference"}})
+            exit(-1)
+        model_file = f'{MODEL_PATH}/deeplab_weights.pt'
+    elif not os.path.isfile(f'{MODEL_PATH}/{WEIGHTS_FILENAME}'):
+        logger.error("No weights file were found")
+        cs.post_progress(
+            {"stage": f"1 из {MAX_STAGE}", "progress": 0, "statistics": {"test_error": "No weights file were found"}})
+        exit(-1)
+    else:
+        model_file = f'{MODEL_PATH}/deeplab_weights.pt'
+else:
+    if not WORK_FORMAT_TRAINING:
+        logger.error("No weights file were specified for inference")
+        cs.post_progress(
+            {"stage": f"1 из {MAX_STAGE}", "progress": 0,
+             "statistics": {"test_error": "No weights file were specified for inference"}})
+        exit(-1)
+    PROCESS_FREQ = 1
+    model_file = f'{MODEL_PATH}/deeplab_weights.pt'
 
 def check_video_extension(video_path):
     valid_extensions = {"avi", "mp4", "m4v", "mov", "mpg", "mpeg", "wmv"}
@@ -138,17 +161,6 @@ def frame_process_condition(num, markup_path):
         return True
 
 
-def get_img_str(file_name, mask_dir):
-    with open(f'{mask_dir}/{file_name}', 'rb') as image_file:
-        # Читаем содержимое изображения
-        image_data = image_file.read()
-        # Кодируем содержимое в Base64
-        base64_encoded_data = base64.b64encode(image_data)
-        # Преобразуем закодированные данные в строку
-        base64_image_str = base64_encoded_data.decode('utf-8')
-    return base64_image_str
-
-
 def labels_to_dict(labels_file):
     res = dict()
     with open(labels_file, 'r', encoding='utf-8') as labels:
@@ -163,6 +175,8 @@ def prepare_output(input_data, polygons_file, mask_dir):
         video_path = item['file_name']
         file_chains = item['file_chains']
         for chain in file_chains:
+            sum_score = 0
+            item_num = 0
             chain.pop('chain_id', None)
             chain.pop('chain_dataset_id', None)
             chain_name = chain['chain_name']
@@ -182,9 +196,13 @@ def prepare_output(input_data, polygons_file, mask_dir):
                                 'markup_frame': frame['markup_frame'],
                                 'markup_time': frame['markup_time'],
                                 'markup_vector': frame['markup_vector'], # TODO: get vectors as they are needed
-                                'markup_path': {'class': cls, 'polygon': p}
+                                'markup_confidence': round(p['score'], 6),
+                                'markup_path': {'class': cls, 'polygon': p['polygons']}
                             }
                         )
+                        sum_score += p['score']
+                        item_num += 1
+            chain['chain_confidence'] = round(sum_score/item_num, 6)
     return input_data
 
 
@@ -224,6 +242,18 @@ def prepare_bbox_info(json_file):
     return bbox_res
 
 
+def delete_files_in_directory(directory_path):
+   try:
+     files = os.listdir(directory_path)
+     for file in files:
+       file_path = os.path.join(directory_path, file)
+       if os.path.isfile(file_path):
+         os.remove(file_path)
+     print("All files deleted successfully.")
+   except OSError:
+     print("Error occurred while deleting files.")
+
+
 files_in_directory = [
     os.path.join(INPUT_DATA, f)
     for f in os.listdir(INPUT_DATA)
@@ -235,32 +265,17 @@ files_in_directory = [
     file for file in files_in_directory if check_video_extension('.'.join(file.split('.')[0:-1]))
 ]
 
-files_in_weights = [
-    os.path.join(MODEL_PATH, f)
-    for f in os.listdir(MODEL_PATH)
-    if (
-        f.split('.')[-1] == 'pt'
-    )
-]
-if files_in_weights:
-    model_file = files_in_weights[0]
-else:
-    if not WORK_FORMAT_TRAINING:
-        logger.error("No weights file were found")
-        cs.post_progress({"stage": "1 из 2", "progress": 0, "statistics": {"test_error": "No weights file were found"}})
-        exit(-1)
-    model_file = None
-
 directories = list()
 total_images = 0
 start_time = time.time()
+json_data = None
 
 count = 0
 
 #Only needed for training mode to get bboxes
 bbox_info = None
 for file in files_in_directory:
-    cs.post_progress({"stage": "1 из 2", "progress": round(100*(count/len(files_in_directory)), 2)})
+    cs.post_progress({"stage": f"1 из {MAX_STAGE}", "progress": round(100*(count/len(files_in_directory)), 2)})
     with open(file, 'r', encoding='utf-8') as input_json:
         json_data = json.load(input_json)
 
@@ -272,6 +287,7 @@ for file in files_in_directory:
 
     for item in json_data['files']:
         prepared_data = dict()
+        prepared_data_train = dict()
         video_path = item.get('file_name', "no_video")
         _, video_path = os.path.split(video_path)
         if not os.path.isfile(f'{INPUT}/{video_path}'):
@@ -287,9 +303,11 @@ for file in files_in_directory:
             for f in files_in_directory:
                 if verify_additional_file_name(f, video_path):
                     bbox_info = prepare_bbox_info(f)
+                    with open(f, 'r', encoding='utf-8') as input_json:
+                        json_data_bboxes = json.load(input_json)
             if not bbox_info:
-                logger.warning("No ")
-
+                logger.warning(f"No bbox data in training mode for {video_path}")
+                continue
         file_chains = item['file_chains']
         for chain in file_chains:
             chain_name = chain['chain_name']
@@ -298,12 +316,12 @@ for file in files_in_directory:
                     frame_num = frame['markup_frame']
                     bbox_data = get_bbox_data(frame, bbox_info)
                     if frame_process_condition(frame_num, bbox_data):
-                        if frame_num not in prepared_data.keys():
-                            prepared_data[frame_num] = dict()
-                        if chain_name not in prepared_data[frame_num].keys():
-                            prepared_data[frame_num][chain_name] = bbox_data
-                            prepared_data[frame_num][chain_name]['polygons'] = dict()
-                        prepared_data[frame_num][chain_name]['polygons'][frame['markup_path']['class']] = frame["markup_path"]['polygon']
+                        if frame_num not in prepared_data_train.keys():
+                            prepared_data_train[frame_num] = dict()
+                        if chain_name not in prepared_data_train[frame_num].keys():
+                            prepared_data_train[frame_num][chain_name] = bbox_data
+                            prepared_data_train[frame_num][chain_name]['polygons'] = dict()
+                        prepared_data_train[frame_num][chain_name]['polygons'][frame['markup_path']['class']] = frame["markup_path"]['polygon']
 
             else:
                 for frame in chain['chain_markups']:
@@ -313,6 +331,7 @@ for file in files_in_directory:
                         if frame_num not in prepared_data.keys():
                             prepared_data[frame_num] = dict()
                         prepared_data[frame_num][chain_name] = bbox_data
+        prepared_data = prepared_data_train if WORK_FORMAT_TRAINING else prepared_data
         if not prepared_data:
             continue
         prepare_image_dir(f'{INPUT}/{video_path}', prepared_data, im_dir, mask_dir)
@@ -325,45 +344,41 @@ for file in files_in_directory:
     if processed_frames["small"] + processed_frames["ok"] == 0:
         logger.warning(f"For {file} no bounder boxes were found")
         continue
-    directories.append((json_data, im_dir, mask_dir, video_path, file, processed_frames["small"] + processed_frames["ok"]))
+    directories.append((json_data_bboxes if WORK_FORMAT_TRAINING else json_data, im_dir, mask_dir, video_path, file, processed_frames["small"] + processed_frames["ok"]))
     total_images += (processed_frames["small"] + processed_frames["ok"])
     processed_frames["small"] = 0
     processed_frames["ok"] = 0
     count += 1
 
-cs.post_progress({"stage": "1 из 2", "progress": 100})
-counter = ProgressCounter(total=total_images, processed=0, cs=cs, logger=logger)
-deeplab = DeeplabTraining() if WORK_FORMAT_TRAINING else DeeplabInference(model_path=model_file, demo_mode=DEMO_MODE, counter=counter)
-cs.post_progress({"stage": "2 из 2", "progress": 0})
+cs.post_progress({"stage": f"1 из {MAX_STAGE}", "progress": 100})
+
 
 for json_data, image_directory, mask_directory, vp, f, frame_amount in directories:
     if WORK_FORMAT_TRAINING:
+        cs.post_progress({"stage": "2 из 3", "progress": 0})
+        counter = ProgressCounter(total=total_images, processed=0, cs=cs, logger=logger, stage=2, max_stage=MAX_STAGE)
+        deeplab = DeeplabTraining()
         start_time = time.time()
-        output_weights = f'{OUTPUT_PATH}/deeplab_weights.pt'
-        deeplab.run(image_path=image_directory, mask_path=mask_directory, model_path=model_file, output_weights=output_weights)
-        # command = f'python run_train.py --image_path {image_directory} --mask_path {mask_directory} --output_weights {output_weights} --host_web {args.host_web}'
-        # if model_file:
-        #     command += f' --model_path {model_file}'
-        # cs.post_progress({"stage": "1 из 2", "progress": 100})
-        # os.system(command)
-        counter.report_status(report_amount=frame_amount, out_file=output_weights)
+        deeplab.run(image_path=image_directory, mask_path=mask_directory, model_path=model_file, output_weights=model_file)
+        counter.report_status(report_amount=frame_amount, out_file=model_file)
         logger.info(f'Deeplab training took {time.time() - start_time} seconds')
-        model_file = output_weights
-    else:
-        start_time = time.time()
-        polygon_file = f'{OUTPUT_PATH}/{vp}_labels.txt' if DEMO_MODE else f'{vp}_labels.txt'
-        deeplab.run(image_directory=image_directory, mask_directory=mask_directory, polygon_file=polygon_file)
-        # command = f'python run_inference.py --image_path {image_directory} --output_path {mask_directory} --model_path {model_file} --host_web {args.host_web} --class_info_path {polygon_file}'
-        # if DEMO_MODE:
-        #     command += f' --demo_mode'
-        # os.system(command)
-        logger.info(f'Deeplab inference took {time.time() - start_time} seconds')
+    cs.post_progress({"stage": f"{MAX_STAGE} из {MAX_STAGE}", "progress": 0})
+    counter = ProgressCounter(total=total_images, processed=0, cs=cs, logger=logger, stage=MAX_STAGE, max_stage=MAX_STAGE)
+    start_time = time.time()
+    delete_files_in_directory(mask_directory)
+    deeplab = DeeplabInference(model_path=model_file, demo_mode=DEMO_MODE, counter=counter)
+    polygon_file = f'{OUTPUT_PATH}/{vp}_labels.txt' if DEMO_MODE else f'{vp}_labels.txt'
+    deeplab.run(image_directory=image_directory, mask_directory=mask_directory, polygon_file=polygon_file)
+    logger.info(f'Deeplab inference took {time.time() - start_time} seconds')
 
-        result = prepare_output(json_data, polygon_file, mask_directory)
-        with open(f"{OUTPUT_PATH}/{os.path.basename(f)}", "w") as outfile:
-            json.dump(result, outfile, ensure_ascii=False)
-        counter.report_status(report_amount=frame_amount % 1000, out_file=f"{OUTPUT_PATH}/{os.path.basename(f)}")
-cs.post_progress({"stage": "2 из 2", "progress": 100})
+    result = prepare_output(json_data, polygon_file, mask_directory)
+    spl = os.path.basename(f).split('_')
+    output_file_name = '_'.join(spl[1:len(spl)]) if os.path.basename(f).startswith('IN_') else os.path.basename(f)
+
+    with open(f"{OUTPUT_PATH}/{output_file_name}", "w") as outfile:
+        json.dump(result, outfile, ensure_ascii=False)
+    counter.report_status(report_amount=frame_amount % 1000, out_file=f"{OUTPUT_PATH}/{os.path.basename(f)}")
+cs.post_progress({"stage": f"{MAX_STAGE} из {MAX_STAGE}", "progress": 100})
 cs.post_end()
 logger.info(
     f'The whole process took {time.time() - run_time} seconds, work_format_training mode = {WORK_FORMAT_TRAINING}')
