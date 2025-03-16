@@ -364,13 +364,18 @@ for file in files_in_directory:
         # if not check_video_extension(video_path):
         #     continue
 
+        cap = cv2.VideoCapture(f'{INPUT}/{video_path}')
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
         file_chains = item['file_chains']
         for chain in file_chains:
             chain_name = chain['chain_name']
             if WORK_FORMAT_TRAINING:
                 for frame in chain['chain_markups']:
-                    frame_num = frame.get('markup_frame', -1)
-                    frame_time = frame['markup_time']
+                    frame_num = frame.get('markup_frame', None)
+                    if not frame_num:
+                        frame['markup_frame'] = round(float(frame['markup_time']) * float(fps))
+                        frame_num = frame['markup_frame']
                     bbox_data = {"x": frame["markup_path"]["x"], "y": frame["markup_path"]["y"], "width": frame["markup_path"]["width"], "height": frame["markup_path"]["height"]}
                     if frame_process_condition(frame_num, bbox_data):
                         if frame_num not in prepared_data_train.keys():
@@ -382,13 +387,17 @@ for file in files_in_directory:
 
             else:
                 for frame in chain['chain_markups']:
-                    frame_num = frame['markup_frame']
+                    frame_num = frame.get('markup_frame', None)
+                    if not frame_num:
+                        frame['markup_frame'] = round(float(frame['markup_time']) * float(fps))
+                        frame_num = frame['markup_frame']
                     frame_time = frame['markup_time']
                     bbox_data = frame['markup_path']
                     if frame_process_condition(frame_num, bbox_data):
                         if frame_num not in prepared_data.keys():
                             prepared_data[frame_num] = dict()
                         prepared_data[frame_num][chain_name] = bbox_data
+        cap.release()
         prepared_data = prepared_data_train if WORK_FORMAT_TRAINING else prepared_data
         if not prepared_data:
             continue

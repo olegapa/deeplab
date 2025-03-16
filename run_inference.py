@@ -222,7 +222,7 @@ class DeeplabInference:
                             approx = cv2.approxPolyDP(c, approx_eps * peri, True)
                             approximated_contours.append(approx)
                         contours = approximated_contours
-                    polygons_per_image[label] = {"score": score, "polygons": [contour.squeeze().flatten().tolist() for contour in contours], "markup_vector": vector[label]}
+                    polygons_per_image[label] = {"score": score, "polygons": [contour.squeeze().flatten().tolist() for contour in contours], "markup_vector": vector[label].tolist()}
 
                     if self.demo_mode:
                         # Рисуем полигоны на пустой маске
