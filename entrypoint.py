@@ -58,8 +58,19 @@ else:
 if INPUT_DATA_ARG:
     json_input_arg = json.loads(INPUT_DATA_ARG.replace("'", "\""))
     PROCESS_FREQ = int(json_input_arg.get("frame_frequency", 1))
+    h, w = int(json_input_arg.get("tr_h", 224)), int(json_input_arg.get("tr_w", 224))
+    epoches = int(json_input_arg.get("epoches", 50))
+    pixel_hist_step = json_input_arg.get("pixel_hist_step", None)
+    pixel_hist_step = float(pixel_hist_step) if pixel_hist_step else None
+
+    approx_eps = json_input_arg.get("approx_eps", None)
+    approx_eps = float(approx_eps) if approx_eps else None
 else:
     PROCESS_FREQ = 1
+    h, w = 224, 224
+    epoches = 50
+    pixel_hist_step = None
+    approx_eps = None
 
 
 def check_video_extension(video_path):
@@ -255,7 +266,7 @@ for json_data, image_directory, mask_directory, vp, f, frame_amount in directori
     if WORK_FORMAT_TRAINING:
         start_time = time.time()
         output_weights = f'{OUTPUT_PATH}/deeplab_weights.pt'
-        deeplab.run(image_path=image_directory, mask_path=mask_directory, model_path=model_file, output_weights=output_weights)
+        deeplab.run(image_path=image_directory, mask_path=mask_directory, model_path=model_file, output_weights=output_weights, h=h, w=w, epoches=epoches)
         # command = f'python run_train.py --image_path {image_directory} --mask_path {mask_directory} --output_weights {output_weights} --host_web {args.host_web}'
         # if model_file:
         #     command += f' --model_path {model_file}'
@@ -267,7 +278,7 @@ for json_data, image_directory, mask_directory, vp, f, frame_amount in directori
     else:
         start_time = time.time()
         polygon_file = f'{OUTPUT_PATH}/{vp}_labels.txt' if DEMO_MODE else f'{vp}_labels.txt'
-        deeplab.run(image_directory=image_directory, mask_directory=mask_directory, polygon_file=polygon_file)
+        deeplab.run(image_directory=image_directory, mask_directory=mask_directory, polygon_file=polygon_file, h=h, w=w, pixel_hist_step=pixel_hist_step, approx_eps=approx_eps)
         # command = f'python run_inference.py --image_path {image_directory} --output_path {mask_directory} --model_path {model_file} --host_web {args.host_web} --class_info_path {polygon_file}'
         # if DEMO_MODE:
         #     command += f' --demo_mode'

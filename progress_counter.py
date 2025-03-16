@@ -11,7 +11,7 @@ class ProgressCounter:
         self.stage = stage
         self.max_stage = max_stage
 
-    def report_status(self, report_amount, out_file=None, test_error=None, train_error=None):
+    def report_status(self, report_amount, out_file=None, chains_count=None, markups_count=None, test_error=None, train_error=None):
         self.processed += report_amount
         data = {"stage": f"{self.stage} из {self.max_stage}", "progress": round(100*(self.processed / self.total), 2)}
         if out_file or test_error or train_error:
@@ -22,5 +22,9 @@ class ProgressCounter:
                 data['statistics']['train_error'] = test_error
             if test_error:
                 data['statistics']['test_error'] = test_error
+            if chains_count:
+                data['statistics']['chains_count'] = chains_count
+            if markups_count:
+                data['statistics']['markups_count'] = markups_count
         self.logger.info(f'Reporting data: {data}')
         self.cs.post_progress(data)

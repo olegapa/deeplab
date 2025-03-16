@@ -7,7 +7,14 @@ First of all you need to build an image:
 docker build -t deeplab-image .
 ```
 
-#### 1. Evaluate / training mode
+#### 1. Train over images-masks dataset
+raw_data_entrypoint.py entrypoint can be used to train DeepLabV3+ over some dataset (e.g. generated from fashionpedia) that consists of folder with images and folder with masks.
+Example of executing an image with raw_data_entrypoint.py entrypoint
+```
+sudo docker run --gpus all --shm-size=16g -v ./output/images:/images -v ./output/weights:/weights -v ./output:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./output/masks:/masks -it --rm deeplab_raw_data --work_format_training
+```
+
+#### 2. Evaluate / training mode
 
 You need to run the container and mount all of the necessary directories. As an input_data parameter it is possible to pass parameters in json format, 
 for now, only parameter "frame_frequency" is supported. Example how to launch inference:

@@ -12,6 +12,7 @@ import segmentation_models_pytorch as smp, time
 from tqdm import tqdm
 from torch.nn import functional as F
 import logging
+from custom_segmentation import CustomDeepLabV3Plus
 
 # from container_status import ContainerStatus as CS
 
@@ -42,6 +43,21 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # cs = CS(args.host_web, logger)
 N_CLS = 9
 
+def get_class_labels_from_masks(masks, num_classes=9):
+    """
+    Функция, извлекающая информацию о наличии классов в изображении.
+    :param masks: (B, H, W) — маски сегментации
+    :param num_classes: общее количество классов
+    :return: (B, num_classes) — бинарные метки наличия классов
+    """
+    batch_size = masks.shape[0]
+    class_labels = torch.zeros((batch_size, num_classes), device=masks.device)
+
+    for i in range(batch_size):
+        unique_classes = torch.unique(masks[i])  # Выделяем классы, присутствующие на изображении
+        class_labels[i, unique_classes.long()] = 1  # Заполняем матрицу наличия классов
+
+    return class_labels
 
 class CustomSegmentationDataset(Dataset):
     def __init__(self, image_path, mask_path, transformations=None):
@@ -160,7 +176,7 @@ class DeeplabTraining:
     def tic_toc(self, start_time=None):
         return time.time() if start_time == None else time.time() - start_time
 
-    def train(self, model, tr_dl, val_dl, loss_fn, opt, device, epochs, save_prefix, threshold=0.005,
+    def train(self, model, tr_dl, val_dl, segm_loss_fn, class_loss_fn, opt, device, epochs, save_prefix, threshold=0.005,
               save_path="saved_models"):
         tr_loss, tr_pa, tr_iou = [], [], []
         val_loss, val_pa, val_iou = [], [], []
@@ -183,10 +199,20 @@ class DeeplabTraining:
                 ims, gts = batch
                 ims, gts = ims.to(device), gts.to(device)
 
-                preds = model(ims)
+                (preds, class_probs, _) = model(ims)
 
-                met = Metrics(preds, gts, loss_fn, n_cls=self.n_cls)
+                met = Metrics(preds, gts, segm_loss_fn, n_cls=self.n_cls)
+
+                # Лосс для сегментации
                 loss_ = met.loss()
+
+                # Генерация class_labels из маски сегментации
+                class_labels = get_class_labels_from_masks(gts, num_classes=N_CLS)
+
+                # Лосс для classification head
+                classification_loss = class_loss_fn(class_probs, class_labels)
+
+                loss_ += 0.5*classification_loss
 
                 tr_iou_ += met.mIoU()
 
@@ -206,11 +232,16 @@ class DeeplabTraining:
                     ims, gts = batch
                     ims, gts = ims.to(device), gts.to(device)
 
-                    preds = model(ims)
+                    (preds, class_probs, _) = model(ims)
 
-                    met = Metrics(preds, gts, loss_fn, n_cls=self.n_cls)
+                    met = Metrics(preds, gts, segm_loss_fn, n_cls=self.n_cls)
+                    # Генерация class_labels из маски сегментации
+                    class_labels = get_class_labels_from_masks(gts, num_classes=N_CLS)
 
-                    val_loss_ += met.loss().item()
+                    # Лосс для classification head
+                    classification_loss = class_loss_fn(class_probs, class_labels)
+
+                    val_loss_ += met.loss().item() + 0.5*classification_loss.item()
                     val_iou_ += met.mIoU()
                     val_pa_ += met.PA()
 
@@ -271,24 +302,32 @@ class DeeplabTraining:
         if self.model_path:
             if os.path.exists(self.model_path):
                 return torch.load(f"{self.model_path}", weights_only=False)
-        return smp.DeepLabV3Plus(classes=n_cls, encoder_name='resnet152')
+        aux_params = dict(
+            classes=n_cls,
+            activation='sigmoid'
+        )
+        return CustomDeepLabV3Plus(num_classes=n_cls, encoder_name='resnet50', feature_dim=30)
 
-    def run(self, image_path, mask_path, model_path, output_weights):
+    def run(self, image_path, mask_path, model_path, output_weights, h=None, w=None, epoches=50):
         self.image_path, self.mask_path, self.model_path, self.output_weights = image_path, mask_path, model_path, output_weights
-        mean, std, im_h, im_w = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 256, 256
+        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        im_h = h if h else 224
+        im_w = w if w else 224
         trans = A.Compose([A.Resize(im_h, im_w), A.augmentations.transforms.Normalize(mean=mean, std=std),
                            ToTensorV2(transpose_mask=True)])
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        # logger.info(f"device = {device}")
 
         tr_dl, val_dl, self.n_cls = self.get_dls(transformations=trans, split=[0.85, 0.15], bs=32)
 
         model = self.load_model(self.n_cls)
 
         loss_fn = torch.nn.CrossEntropyLoss()
+        classification_loss_fn = torch.nn.BCELoss()
         optimizer = torch.optim.Adam(params=model.parameters(), lr=3e-4)
 
         history = self.train(model=model, tr_dl=tr_dl, val_dl=val_dl,
-                             loss_fn=loss_fn, opt=optimizer, device=device,
-                             epochs=2, save_prefix="clothing")
+                             segm_loss_fn=loss_fn, class_loss_fn=classification_loss_fn, opt=optimizer, device=device,
+                             epochs=epoches, save_prefix="clothing")
 
     #python run_train.py --image_path /output/images --mask_path /output/masks --output_weights /output/deeplab_weights.pt --host_web ""

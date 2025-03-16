@@ -1,6 +1,8 @@
 import argparse
+import bisect
 import json, os, torch, cv2, numpy as np, albumentations as A
 import logging
+import numpy as np
 
 from PIL import Image, ImageOps
 from matplotlib import pyplot as plt
@@ -115,8 +117,7 @@ class DeeplabInference:
         self.model = torch.load(f"{self.model_path}", weights_only=False)
         self.model.eval()
         self.model = self.model.to(self.device)
-
-    def get_dls(self, transformations, split=[0, 1], ns=4):
+    def get_dls(self, transformations, split=[0, 1], ns=4, pixel_hist_step=None):
         assert sum(split) == 1., "Sum of the split must be exactly 1"
 
         ds = CustomSegmentationDataset(transformations=transformations, image_path=self.image_path)
@@ -135,20 +136,24 @@ class DeeplabInference:
 
         return test_d, n_cls
 
-    def inference(self, dl, model, device):
+    def inference(self, dl, model, device, pixel_hist_step=None, approx_eps=None):
         # torch.set_printoptions(threshold=10000, edgeitems=30, precision=1, linewidth=1000, sci_mode=False)
         # np.set_printoptions(threshold=10000, edgeitems=15, precision=1, linewidth=1000, suppress=True)
+        torch.set_printoptions(precision=6)
         os.makedirs(self.output_path, exist_ok=True)
         if self.demo_mode:
-            colored_output_path = f"{self.output_path}_colored"
             polygonized_output_path = f"{self.output_path}_polygonized_mask"
-            os.makedirs(colored_output_path, exist_ok=True)
             os.makedirs(polygonized_output_path, exist_ok=True)
 
         labels_dict = {}
         polygons_dict = {}
         total = len(dl)
-
+        if pixel_hist_step:
+            hist_data = dict()
+            for label, color in color_mapping.items():
+                hist_data[label] = dict()
+                for i in np.arange(0, 1,  pixel_hist_step):
+                    hist_data[label][f"{i:.2f}"] = 0
         for idx, (im, orig_size, save_name) in enumerate(dl):
             if idx % 1000 == 0 and self.counter and idx != 0:
                 self.counter.report_status(1000)
@@ -158,15 +163,18 @@ class DeeplabInference:
 
             # Get predicted mask
             with torch.no_grad():
-                # logger.info(f"model shape = {model(im.to(device)).shape}\n{model(im.to(device)).cpu().numpy()}")
-                # logger.info(f"After argmax: shape = {torch.argmax(model(im.to(device)), dim=1).shape}, argmax = {torch.argmax(model(im.to(device)), dim=1).cpu().numpy()}")
-                # logger.info(
-                #     f"softmax: shape = {torch.softmax(model(im.to(device)), dim=1).shape}, argmax = {torch.softmax(model(im.to(device)), dim=1).cpu().numpy()}")
-                pred = model(im.to(device))
+                (pred, class_out, vector) = model(im.to(device))
+                vector = vector.squeeze()
+                # encoder_res = model.encoder(im.to(device))
+                # logger.info(f"encoder shape = {len(encoder_res)}")
+                # for i in range(len(encoder_res)):
+                #     logger.info(f"{i} item has shape {encoder_res[i].shape}")
+                logger.info(f"class_outp.shape = {class_out.shape}\n class_out = {class_out}")
+                logger.info(f"class_outp.shape = {vector.shape}\n class_out = {vector}")
                 probs = torch.softmax(pred, dim=1)
                 pred_for_score = torch.argmax(pred, dim=1)
                 pred = pred_for_score.squeeze(0).cpu().numpy()
-                # logger.info(f"pref shape = {pred.shape}\n{pred}")
+                # print(model.classification_head)
 
             # Convert prediction to an image and save
             pred_img = Image.fromarray(pred.astype(np.uint8))
@@ -174,7 +182,6 @@ class DeeplabInference:
             pred_img.save(os.path.join(self.output_path, save_name[0].split('/')[-1]))
 
             if self.demo_mode:
-                colored_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
                 polygonized_pred = np.zeros((*pred.shape, 3), dtype=np.uint8)
 
             detected_classes = set()
@@ -182,52 +189,56 @@ class DeeplabInference:
 
             for label, color in color_mapping.items():
                 # TODO: Delete it after training file with bboxes will appear
-                # if int(label) == 0:
-                #     continue
+                if int(label) == 0:
+                    continue
                 mask = (pred == label).astype(np.uint8)
                 score_mask = (pred_for_score == label)
-                # logger.info(mask)
 
                 if np.any(mask):
+                    # logger.info(f"found label {label}")
                     class_probs = probs[:, label, :, :]
                     class_sum = class_probs[score_mask].sum().item()  # сумма вероятностей
-                    # logger.info(f"probs shape = {probs.shape}, class_probs shape = {class_probs.shape}")
-                    # logger.info(f"class_probs[mask] = {class_probs[score_mask]}, shape =  {class_probs[score_mask].shape}")
                     num_pixels = mask.sum().item()  # Количество пикселей класса
-                    # logger.info(f"class_sum = {class_sum}, num_pixels = {num_pixels}")
                     score = class_sum / num_pixels if num_pixels > 0 else 0.0
+                    if pixel_hist_step:
+                        # logger.info(f"class_probs[score_mask] = {class_probs[score_mask]}\nsize = {len(class_probs[score_mask])}")
+                        for e in class_probs[score_mask]:
+                            # logger.info(f"value = {e} gets idx = {idx}")
+                            # logger.info(f"value = {e}")
+                            if e >= float(0.999):
+                                e = 0.99
+                            # logger.info(f"goes lable={label} {(e - e%pixel_hist_step):.2f}'")
+                            hist_data[label][f"{(e - e%pixel_hist_step):.2f}"] += 1
 
                     detected_classes.add(label)
 
                     # Находим контуры (полигоны) на маске
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    polygons_per_image[label] = {"score": score, "polygons": [contour.squeeze().flatten().tolist() for contour in contours]}
+                    # approximate countours
+                    if approx_eps:
+                        approximated_contours = list()
+                        for c in contours:
+                            peri = cv2.arcLength(c, True)
+                            approx = cv2.approxPolyDP(c, approx_eps * peri, True)
+                            approximated_contours.append(approx)
+                        contours = approximated_contours
+                    polygons_per_image[label] = {"score": score, "polygons": [contour.squeeze().flatten().tolist() for contour in contours], "markup_vector": vector[label]}
 
                     if self.demo_mode:
-                        # Окрашиваем оригинальную маску
-                        colored_pred[mask == 1] = color
-
                         # Рисуем полигоны на пустой маске
                         cv2.drawContours(polygonized_pred, contours, -1, color, thickness=cv2.FILLED)
 
             polygons_dict[save_name[0].split('/')[-1]] = polygons_per_image
 
             if self.demo_mode:
-                # Сохраняем исходную окрашенную маску
-                colored_pred_img = Image.fromarray(colored_pred)
-                colored_pred_img = colored_pred_img.resize(orig_size, resample=Image.NEAREST)
-                colored_pred_img.save(os.path.join(colored_output_path, save_name[0].split('/')[-1]))
-
                 restored_mask = np.zeros_like(polygonized_pred, dtype=np.uint8)
-                # logger.info(f"shape = {restored_mask.shape} orig_size = {orig_size}")
 
                 for label, polygons in polygons_per_image.items():
-                    # logger.info(f'for {save_name[0].split("/")[-1]} class_id = {label}, poly_list = {polygons}')
                     for polygon in polygons["polygons"]:
                         # Преобразуем плоский список координат обратно в массив точек
                         points = np.array(polygon, dtype=np.int32).reshape(-1, 2)
                         # Рисуем полигон на маске
-                        cv2.fillPoly(restored_mask, [points], label)
+                        cv2.fillPoly(restored_mask, [points], color_mapping[label])
 
                 # Сохраняем маску, восстановленную по полигонам
                 polygonized_pred_img = Image.fromarray(restored_mask)
@@ -241,13 +252,18 @@ class DeeplabInference:
             json.dump(polygons_dict, polygon_file, ensure_ascii=False)  # Сохраняем полигоны в файл
 
         print(f"Saved all predicted masks and polygons in {self.output_path}")
+        if pixel_hist_step:
+            with open(f"{self.class_info_path}_histogram", 'a', encoding='utf-8') as hist_file:
+                json.dump(hist_data, hist_file, ensure_ascii=False)  # Сохраняем полигоны в файл
 
-    def run(self, image_directory, mask_directory, polygon_file):
+    def run(self, image_directory, mask_directory, polygon_file, h=None, w=None, pixel_hist_step=None, approx_eps=None):
         self.image_path, self.output_path, self.class_info_path = image_directory, mask_directory, polygon_file
-        mean, std, im_h, im_w = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], 256, 256
+        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        im_h = h if h else 224
+        im_w = w if w else 224
         trans = A.Compose([A.Resize(im_h, im_w), A.augmentations.transforms.Normalize(mean=mean, std=std),
                            ToTensorV2(transpose_mask=True)])
 
         test_dl, n_cls = self.get_dls(transformations=trans, split=[0, 1])
 
-        self.inference(test_dl, model=self.model, device=self.device)
+        self.inference(test_dl, model=self.model, device=self.device, pixel_hist_step=pixel_hist_step, approx_eps=approx_eps)
