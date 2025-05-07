@@ -13,7 +13,8 @@ Example of executing an image with raw_data_entrypoint.py entrypoint
 ```
 sudo docker run --gpus all --shm-size=16g -v ./output/images:/images -v ./output/weights:/weights -v ./output:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./output/masks:/masks -it --rm deeplab_raw_data --work_format_training
 ```
-
+Additional flags:
+`--demo_mode` - execute 
 #### 2. Evaluate / training mode
 
 You need to run the container and mount all of the necessary directories. As an input_data parameter it is possible to pass parameters in json format, 

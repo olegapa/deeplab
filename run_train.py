@@ -23,25 +23,8 @@ logger = logging.getLogger(__name__)
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-# parser = argparse.ArgumentParser(description="Process some images.")
-
-# Добавляем аргументы
-# parser.add_argument('--image_path', type=str, required=True, help='Path to the input image')
-# parser.add_argument('--mask_path', type=str, help='Path to the mask image')
-# parser.add_argument('--model_path', type=str, help='Path to the input image')
-# parser.add_argument('--output_weights', type=str, help='Path to the input image')
-# parser.add_argument("--host_web", type=str, help="url host with web")
-#
-# # Парсим аргументы
-# args = parser.parse_args()
-#
-# # Получаем значения аргументов
-# image_path = args.image_path
-# mask_path = args.mask_path
-# model_path = args.model_path
-# output_weights = args.output_weights
-# cs = CS(args.host_web, logger)
 N_CLS = 9
+
 
 def get_class_labels_from_masks(masks, num_classes=9):
     """
@@ -58,6 +41,7 @@ def get_class_labels_from_masks(masks, num_classes=9):
         class_labels[i, unique_classes.long()] = 1  # Заполняем матрицу наличия классов
 
     return class_labels
+
 
 class CustomSegmentationDataset(Dataset):
     def __init__(self, image_path, mask_path, transformations=None):
@@ -168,19 +152,25 @@ class DeeplabTraining:
         logger.info(f"There are {len(val_ds)} number of images in the validation set")
 
         # Get dataloaders
-        tr_dl = DataLoader(dataset=tr_ds, batch_size=bs, shuffle=True, num_workers=ns)
-        val_dl = DataLoader(dataset=val_ds, batch_size=bs, shuffle=False, num_workers=ns)
+        tr_dl = DataLoader(dataset=tr_ds, batch_size=bs, shuffle=True, num_workers=ns, drop_last=True) if split[
+                                                                                                              0] > 0 else None
+        val_dl = DataLoader(dataset=val_ds, batch_size=bs, shuffle=False, num_workers=ns, drop_last=True)
 
         return tr_dl, val_dl, n_cls
 
     def tic_toc(self, start_time=None):
         return time.time() if start_time == None else time.time() - start_time
 
-    def train(self, model, tr_dl, val_dl, segm_loss_fn, class_loss_fn, opt, device, epochs, save_prefix, threshold=0.005,
+    def train(self, model, tr_dl, val_dl, segm_loss_fn, class_loss_fn, opt, device, epochs, save_prefix,
+              threshold=0.005,
               save_path="saved_models"):
         tr_loss, tr_pa, tr_iou = [], [], []
         val_loss, val_pa, val_iou = [], [], []
-        tr_len, val_len = len(tr_dl), len(val_dl)
+        if tr_dl is not None:
+            tr_len = len(tr_dl)
+        else:
+            tr_len = 0
+        val_len = len(val_dl)
         best_loss, decrease, not_improve, early_stop_threshold = np.inf, 1, 0, 5
         os.makedirs(save_path, exist_ok=True)
 
@@ -191,37 +181,36 @@ class DeeplabTraining:
         for epoch in range(1, epochs + 1):
             tic = self.tic_toc()
             tr_loss_, tr_iou_, tr_pa_ = 0, 0, 0
-            # cs.post_progress('{:.2%}'.format(epoch / epochs))
+            if tr_dl is not None:
+                model.train()
+                logger.info(f"Epoch {epoch} train process is started...")
+                for idx, batch in enumerate(tqdm(tr_dl)):
+                    ims, gts = batch
+                    ims, gts = ims.to(device), gts.to(device)
 
-            model.train()
-            logger.info(f"Epoch {epoch} train process is started...")
-            for idx, batch in enumerate(tqdm(tr_dl)):
-                ims, gts = batch
-                ims, gts = ims.to(device), gts.to(device)
+                    (preds, class_probs, _) = model(ims)
 
-                (preds, class_probs, _) = model(ims)
+                    met = Metrics(preds, gts, segm_loss_fn, n_cls=self.n_cls)
 
-                met = Metrics(preds, gts, segm_loss_fn, n_cls=self.n_cls)
+                    # Лосс для сегментации
+                    loss_ = met.loss()
 
-                # Лосс для сегментации
-                loss_ = met.loss()
+                    # Генерация class_labels из маски сегментации
+                    class_labels = get_class_labels_from_masks(gts, num_classes=N_CLS)
 
-                # Генерация class_labels из маски сегментации
-                class_labels = get_class_labels_from_masks(gts, num_classes=N_CLS)
+                    # Лосс для classification head
+                    classification_loss = class_loss_fn(class_probs, class_labels)
 
-                # Лосс для classification head
-                classification_loss = class_loss_fn(class_probs, class_labels)
+                    loss_ += 0.5 * classification_loss
 
-                loss_ += 0.5*classification_loss
+                    tr_iou_ += met.mIoU()
 
-                tr_iou_ += met.mIoU()
+                    tr_pa_ += met.PA()
+                    tr_loss_ += loss_.item()
 
-                tr_pa_ += met.PA()
-                tr_loss_ += loss_.item()
-
-                loss_.backward()
-                opt.step()
-                opt.zero_grad()
+                    loss_.backward()
+                    opt.step()
+                    opt.zero_grad()
 
             logger.info(f"Epoch {epoch} validation process is started...")
             model.eval()
@@ -241,57 +230,59 @@ class DeeplabTraining:
                     # Лосс для classification head
                     classification_loss = class_loss_fn(class_probs, class_labels)
 
-                    val_loss_ += met.loss().item() + 0.5*classification_loss.item()
+                    val_loss_ += met.loss().item() + 0.5 * classification_loss.item()
                     val_iou_ += met.mIoU()
                     val_pa_ += met.PA()
+                    # logger.info(f"val_iou = {val_iou_}\tval_pa_ = {val_pa_} ")
 
             logger.info(f"Epoch {epoch} train process is completed.")
 
-            tr_loss_ /= tr_len
-            tr_iou_ /= tr_len
-            tr_pa_ /= tr_len
-
+            logger.info("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            if tr_dl is not None:
+                tr_loss_ /= tr_len
+                tr_iou_ /= tr_len
+                tr_pa_ /= tr_len
+                logger.info(f"\nEpoch {epoch} train process results: \n")
+                logger.info(f"Train Time         -> {self.tic_toc(tic):.3f} secs")
+                logger.info(f"Train Loss         -> {tr_loss_:.3f}")
+                logger.info(f"Train PA           -> {tr_pa_:.3f}")
+                logger.info(f"Train IoU          -> {tr_iou_:.3f}")
+                tr_loss.append(tr_loss_)
+                tr_iou.append(tr_iou_)
+                tr_pa.append(tr_pa_)
             val_loss_ /= val_len
             val_iou_ /= val_len
             val_pa_ /= val_len
-
-            logger.info("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-            logger.info(f"\nEpoch {epoch} train process results: \n")
-            logger.info(f"Train Time         -> {self.tic_toc(tic):.3f} secs")
-            logger.info(f"Train Loss         -> {tr_loss_:.3f}")
-            logger.info(f"Train PA           -> {tr_pa_:.3f}")
-            logger.info(f"Train IoU          -> {tr_iou_:.3f}")
+            # logger.info(f"val_len = {val_len}")
             logger.info(f"Validation Loss    -> {val_loss_:.3f}")
             logger.info(f"Validation PA      -> {val_pa_:.3f}")
             logger.info(f"Validation IoU     -> {val_iou_:.3f}\n")
 
-            tr_loss.append(tr_loss_)
-            tr_iou.append(tr_iou_)
-            tr_pa.append(tr_pa_)
+
 
             val_loss.append(val_loss_)
             val_iou.append(val_iou_)
             val_pa.append(val_pa_)
 
-            if best_loss > (val_loss_ + threshold):
-                logger.info(f"Loss decreased from {best_loss:.3f} to {val_loss_:.3f}!")
-                best_loss = val_loss_
-                decrease += 1
-                if decrease % 2 == 0:
-                    logger.info("Saving the model with the best loss value...")
-                    os.makedirs('/'.join(self.output_weights.split('/')[0:-1]), exist_ok=True)
-                    torch.save(model, f"{self.output_weights}")
+            if tr_dl is not None:
+                if best_loss > (val_loss_ + threshold):
+                    logger.info(f"Loss decreased from {best_loss:.3f} to {val_loss_:.3f}!")
+                    best_loss = val_loss_
+                    decrease += 1
+                    if decrease % 2 == 0:
+                        logger.info(f"Saving the model with the best loss value to {self.output_weights}")
+                        os.makedirs('/'.join(self.output_weights.split('/')[0:-1]), exist_ok=True)
+                        torch.save(model, f"{self.output_weights}")
 
-
-            else:
-                not_improve += 1
-                best_loss = val_loss_
-                logger.info(f"Loss did not decrease for {not_improve} epoch(s)!")
-                if not_improve == early_stop_threshold:
-                    logger.info(
-                        f"Stopping training process becuase loss value did not decrease for {early_stop_threshold} epochs!")
-                    break
-            logger.info("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+                else:
+                    not_improve += 1
+                    best_loss = val_loss_
+                    logger.info(f"Loss did not decrease for {not_improve} epoch(s)!")
+                    if not_improve == early_stop_threshold:
+                        logger.info(
+                            f"Stopping training process becuase loss value did not decrease for {early_stop_threshold} epochs!")
+                        break
+                logger.info("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
 
         logger.info(f"Train process is completed in {(self.tic_toc(train_start)) / 60:.3f} minutes.")
 
@@ -306,11 +297,14 @@ class DeeplabTraining:
             classes=n_cls,
             activation='sigmoid'
         )
-        return CustomDeepLabV3Plus(num_classes=n_cls, encoder_name='resnet50', feature_dim=30)
+        return CustomDeepLabV3Plus(num_classes=n_cls, encoder_name='resnet50', feature_dim=30, logger=logger)
 
-    def run(self, image_path, mask_path, model_path, output_weights, h=None, w=None, epoches=50):
+    def run(self, image_path, mask_path, model_path, output_weights, h=None, w=None, epoches=50, eval_mode=False):
         self.image_path, self.mask_path, self.model_path, self.output_weights = image_path, mask_path, model_path, output_weights
-        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        mean, std, split = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225], [0.85, 0.15]
+        if eval_mode:
+            split = [0, 1]
+            epoches = 1
         im_h = h if h else 224
         im_w = w if w else 224
         trans = A.Compose([A.Resize(im_h, im_w), A.augmentations.transforms.Normalize(mean=mean, std=std),
@@ -318,7 +312,7 @@ class DeeplabTraining:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         # logger.info(f"device = {device}")
 
-        tr_dl, val_dl, self.n_cls = self.get_dls(transformations=trans, split=[0.85, 0.15], bs=32)
+        tr_dl, val_dl, self.n_cls = self.get_dls(transformations=trans, split=split, bs=32)
 
         model = self.load_model(self.n_cls)
 

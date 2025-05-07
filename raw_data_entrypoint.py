@@ -15,7 +15,8 @@ parser = argparse.ArgumentParser(description="Process some images.")
 
 parser.add_argument("--work_format_training", action="store_true", help="Flag for training mode")
 parser.add_argument("--demo_mode", action="store_true", help="Flag for demo mode")
-parser.add_argument('--input_data', type=str, help='Path to the input image')
+parser.add_argument("--eval_mode", action="store_true", help="Flag for evaluation mode")
+parser.add_argument('--input_data', type=str, help='Dictionary with optional keys')
 
 args = parser.parse_args()
 INPUT_DATA_ARG = args.input_data
@@ -31,6 +32,7 @@ else:
 args = parser.parse_args()
 WORK_FORMAT_TRAINING = args.work_format_training
 DEMO_MODE = args.demo_mode
+EVAL_MODE = args.eval_mode
 IMAGE_PATH = '/images'
 MASK_PATH = '/masks'
 MODEL_PATH = "/weights"
@@ -56,8 +58,8 @@ else:
 
 if WORK_FORMAT_TRAINING:
     deeplab = DeeplabTraining(n_cls=N_CLS)
-    logger.info(f"h, w = {h}, {w}")
-    deeplab.run(image_path=IMAGE_PATH, mask_path=MASK_PATH, model_path=model_file, output_weights=f'{OUTPUT_PATH}/deeplab_weights.pt', h=h, w=w, epoches=epoches)
+    # logger.info(f"h, w = {h}, {w}")
+    deeplab.run(image_path=IMAGE_PATH, mask_path=MASK_PATH, model_path=model_file, output_weights=f'{OUTPUT_PATH}/deeplab_weights.pt', h=h, w=w, epoches=epoches, eval_mode=EVAL_MODE)
 else:
     deeplab = DeeplabInference(model_path=model_file, demo_mode=DEMO_MODE, counter=None)
     deeplab.run(image_directory=IMAGE_PATH, mask_directory=f'/{OUTPUT_PATH}/{MASK_PATH}', polygon_file=f'{OUTPUT_PATH}/polygons.txt', h=h, w=w)

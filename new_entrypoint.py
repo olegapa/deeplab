@@ -15,6 +15,29 @@ from run_train import DeeplabTraining
 from progress_counter import ProgressCounter
 import visualization
 
+
+color_mapping = {
+    0: (0, 0, 0),  # Background
+    1: (128, 0, 0),  # Jacket/Coat| "Shirt/Blouse", "vest"
+    2: (0, 128, 0),  # Shirt/Blouse| "top, t-shirt, sweatshirt", "Sweater"
+    3: (128, 128, 0),  # Sweater/Sweatshirt/Hoodie| "cardigan", "jacket", "coat", "cape"
+    4: (0, 0, 128),  # Dress/Romper| "pants"
+    5: (128, 0, 128),  # Pants/Jeans/Leggings| "shorts", "skirt"
+    6: (0, 128, 128),  # Shorts| "dress", "jumpsuit"
+    7: (128, 128, 128),  # Skirt| "shoe"
+    8: (64, 0, 0),  # Shoes| "bag, wallet", "umbrella", "hat", "headband, head covering, hair accessory"
+    # 9: (192, 0, 0),  # Vest|
+    # 10: (64, 128, 0),  # Boots
+    # 11: (192, 128, 0),  # Bodysuit/T-shirt/Top
+    # 12: (64, 0, 128),  # Bag/Purse
+    # 13: (192, 0, 128),  # Hat
+    # 14: (64, 128, 128),  # Scarf/Tie
+    # 15: (192, 128, 128),  # Gloves
+    # 16: (0, 64, 0),  # Blazer/Suit
+    # 17: (128, 64, 0),  # Underwear/Swim
+}
+
+
 run_time = time.time()
 logging.basicConfig(level=logging.INFO, filename='/output/deeplab.log', filemode='w',
                     format='%(name)s - %(levelname)s - %(message)s')
@@ -121,23 +144,19 @@ def prepare_image_dir(file_path, prepared_data, out_path, mask_out_path=None):
     os.makedirs(out_path, exist_ok=True)
     os.makedirs(mask_out_path, exist_ok=True)
     cap = cv2.VideoCapture(file_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = 0
     success = True
 
     while success:
         success, frame = cap.read()
-        frame_time = float(frame_count) / float(fps)
-
         if not success:
             break
-
         # Проверяем, есть ли данный кадр в prepared_data
         if frame_count in prepared_data:
             frame_data = prepared_data[frame_count]
 
             for person_id, bbox in frame_data.items():
-                x, y, width, height = bbox['x'], bbox['y'], bbox['width'], bbox['height']
+                x, y, width, height = int(bbox['x']), int(bbox['y']), int(bbox['width']), int(bbox['height'])
                 person_image = frame[y:y + height, x:x + width]
 
                 # Сохранение изображения человека
@@ -147,13 +166,14 @@ def prepare_image_dir(file_path, prepared_data, out_path, mask_out_path=None):
                 cv2.imwrite(person_image_path, person_image)
                 if WORK_FORMAT_TRAINING:
                     polygons = bbox['polygons']
-                    mask = np.zeros((width, height), dtype=np.uint8)
+                    mask = np.zeros((height, width), dtype=np.uint8)
                     # logger.info(f"shape = {mask.shape} width height = {(width, height)}")
                     for class_id, poly_list in polygons.items():
                         # logger.info(f'for {image_name} class_id = {class_id}, poly_list = {poly_list}')
                         for poly in poly_list:
                             # Преобразуем список координат в массив точек формы (-1, 1, 2)
-                            points = np.array(poly, dtype=np.int32).reshape(-1, 2)
+                            poly_shifted = [(px - x, py - y) for px, py in zip(poly[::2], poly[1::2])]
+                            points = np.array(poly_shifted, dtype=np.int32).reshape(-1, 2)
                             # points = points[:, [1, 0]]
                             # Заполняем область полигона на маске
                             cv2.fillPoly(mask, [points], int(class_id))
@@ -178,7 +198,7 @@ def frame_process_condition(num, markup_path):
         return True
     if ((PROCESS_FREQ < 2 or int(num) % PROCESS_FREQ == 1) and markup_path['x'] > 0 and markup_path['y'] > 0
             and markup_path['width'] > min_width and markup_path['height'] > min_height):
-        if markup_path['width'] < 50 or markup_path['height'] < 100:
+        if markup_path['width'] < 224 or markup_path['height'] < 224:
             processed_frames["small"] += 1
         else:
             processed_frames['ok'] += 1
@@ -191,7 +211,7 @@ def labels_to_dict(labels_file):
         return json.load(labels)
 
 
-def resize_polygons(polygons, orig_width, orig_height):
+def resize_polygons(polygons, orig_width, orig_height, orig_x, orig_y):
     """
     Масштабирует полигоны обратно к размерам исходного баундер-бокса.
 
@@ -208,15 +228,27 @@ def resize_polygons(polygons, orig_width, orig_height):
     for polygon in polygons:
         resized_polygon = []
         for i in range(0, len(polygon), 2):
-            x = int(polygon[i] * scale_x)
-            y = int(polygon[i + 1] * scale_y)
+            x = int(orig_x) + int(polygon[i] * scale_x)
+            y = int(orig_y) + int(polygon[i + 1] * scale_y)
             resized_polygon.extend([x, y])
         resized_polygons.append(resized_polygon)
 
     return resized_polygons
 
 
-def prepare_output(input_data, polygons_file, mask_dir):
+def prepare_output(input_data, polygons_file=None):
+    if not polygons_file:
+        input_data.pop('datasets', None)
+        for item in input_data['files']:
+            item.pop('file_subset', None)
+            file_chains = item.get('file_chains', None)
+            if file_chains:
+                for chain in file_chains:
+                    chain.pop('chain_id', None)
+                    chain.pop('chain_dataset_id', None)
+                    chain.pop('chain_markups', None)
+        return input_data
+
     vector_list = list()
     vector_chain_list = list()
     labels = labels_to_dict(polygons_file)
@@ -244,8 +276,9 @@ def prepare_output(input_data, polygons_file, mask_dir):
                 file_name = get_image_name(video_path, frame_num, chain_name)
                 if frame_process_condition(frame_num, frame['markup_path']):
                     for cls, p in labels[file_name].items():
-                        resized_polygons = resize_polygons(p['polygons'], frame['markup_path']['width'], frame['markup_path']['height'])
+                        resized_polygons = resize_polygons(p['polygons'], frame['markup_path']['width'], frame['markup_path']['height'], frame['markup_path']['x'], frame['markup_path']['y'])
                         vct = np.array(p['markup_vector'])
+                        # logger.info(vct)
                         vector_list.append(vct)
                         temp_vect_list.append(vct)
                         chain['chain_markups'].append(
@@ -262,8 +295,12 @@ def prepare_output(input_data, polygons_file, mask_dir):
                         )
                         sum_score += p['score']
                         item_num += 1
-            vector_chain_list.append(np.mean(np.array(temp_vect_list), axis=0))
-            chain['chain_vector'] = len(vector_list)-1
+            # logger.info(np.mean(np.array(temp_vect_list), axis=0))
+            if temp_vect_list:
+                vector_chain_list.append(np.mean(np.array(temp_vect_list), axis=0))
+                chain['chain_vector'] = len(vector_chain_list)-1
+            else:
+                chain['chain_vector'] = None
             if item_num == 0:
                 chain['chain_confidence'] = 0
             else:
@@ -337,6 +374,29 @@ json_data = None
 
 count = 0
 
+def save_empty_file(data, f, total_files, current_file_count):
+    result = prepare_output(data)
+    spl = os.path.basename(f).split('_')
+    output_file_name = '_'.join(spl[1:len(spl)]) if os.path.basename(f).startswith('IN_') else os.path.basename(
+        f)
+    spl = output_file_name.split('.')
+    outp_without_ext = '.'.join(spl[0:len(spl) - 1])
+    output_file_name = "OUT_" + output_file_name
+    result['files'][0]['file_name'] = outp_without_ext
+
+    with open(f"{OUTPUT_PATH}/{output_file_name}", "w") as outfile:
+        json.dump(result, outfile, ensure_ascii=False)
+
+    empty_vectors, empty_vector_chains = list(), list()
+
+    with open(f"{OUTPUT_PATH}/{outp_without_ext}_chains_vectors.pkl", "wb") as pickle_file:
+        pickle.dump(empty_vector_chains, pickle_file)
+    with open(f"{OUTPUT_PATH}/{outp_without_ext}_markups_vectors.pkl", "wb") as pickle_file:
+        pickle.dump(empty_vectors, pickle_file)
+    cs.post_progress(
+        {"stage": f"1 из {MAX_STAGE}", "progress": round(100 * (current_file_count / len(total_files)), 2),
+         "statistics": {"out_file": output_file_name, "chains_count": 0, "markups_count": 0}})
+
 #Only needed for training mode to get bboxes
 bbox_info = None
 for file in files_in_directory:
@@ -355,12 +415,14 @@ for file in files_in_directory:
         prepared_data_train = dict()
         video_path = item.get('file_name', 'no_video')
         _, video_path = os.path.split(video_path)
-        if not os.path.isfile(f'{INPUT}/{video_path}'):
-            logger.warning(f"File name {video_path} doesn't exist - it is skipped")
-            continue
+        if not (os.path.isfile(f'{INPUT}/{video_path}') or os.path.islink(f'{INPUT}/{video_path}')):
+            cs.post_error({"msg": "Video file hasn't been found", "details": f"File name: {INPUT}/{video_path}"})
+            logger.warning(f"File name {INPUT}/{video_path} doesn't exist - it is skipped")
+            break
         if not verify_file_name(file, video_path):
-            logger.warning(f"File name {file} doesn't correspond to file_name key in json {video_path} - it is skipped")
-            continue
+            cs.post_error({"msg": "Invalid file name", "details": f"File name {file} doesn't correspond to file_name key in json {INPUT}/{video_path}"})
+            logger.warning(f"File name {file} doesn't correspond to file_name key in json {video_path}")
+            break
         # if not check_video_extension(video_path):
         #     continue
 
@@ -376,6 +438,9 @@ for file in files_in_directory:
                     if not frame_num:
                         frame['markup_frame'] = round(float(frame['markup_time']) * float(fps))
                         frame_num = frame['markup_frame']
+                    frame["markup_path"]["x"], frame["markup_path"]["y"] = round(frame["markup_path"]["x"]), round(frame["markup_path"]["y"])
+                    frame["markup_path"]["width"], frame["markup_path"]["height"] = round(frame["markup_path"]["width"]), round(frame["markup_path"]["height"])
+
                     bbox_data = {"x": frame["markup_path"]["x"], "y": frame["markup_path"]["y"], "width": frame["markup_path"]["width"], "height": frame["markup_path"]["height"]}
                     if frame_process_condition(frame_num, bbox_data):
                         if frame_num not in prepared_data_train.keys():
@@ -398,18 +463,21 @@ for file in files_in_directory:
                             prepared_data[frame_num] = dict()
                         prepared_data[frame_num][chain_name] = bbox_data
         cap.release()
-        prepared_data = prepared_data_train if WORK_FORMAT_TRAINING else prepared_data
-        if not prepared_data:
-            continue
-        prepare_image_dir(f'{INPUT}/{video_path}', prepared_data, im_dir, mask_dir)
+    prepared_data = prepared_data_train if WORK_FORMAT_TRAINING else prepared_data
+    if not prepared_data:
+        save_empty_file(json_data, file, files_in_directory, count)
+        continue
+    prepare_image_dir(f'{INPUT}/{video_path}', prepared_data, im_dir, mask_dir)
     logger.info(f'Data preparation took {time.time() - start_time} seconds')
     logger.info(f'Amount of small images (with height < 100 or width < 50): {processed_frames["small"]} '
                 f'Amount of other images: {processed_frames["ok"]}. Total: {processed_frames["small"] + processed_frames["ok"]}')
     if not video_path:
         logger.warning(f"For {file} correspondent videos")
+        save_empty_file(json_data, file, files_in_directory, count)
         continue
     if processed_frames["small"] + processed_frames["ok"] == 0:
         logger.warning(f"For {file} no bounder boxes were found")
+        save_empty_file(json_data, file, files_in_directory, count)
         continue
     directories.append((json_data, im_dir, mask_dir, video_path, file, processed_frames["small"] + processed_frames["ok"]))
     total_images += (processed_frames["small"] + processed_frames["ok"])
@@ -444,7 +512,7 @@ for json_data, image_directory, mask_directory, vp, f, frame_amount in directori
     deeplab.run(image_directory=image_directory, mask_directory=mask_directory, polygon_file=polygon_file, h=h, w=w, pixel_hist_step=pixel_hist_step, approx_eps=approx_eps)
     logger.info(f'Deeplab inference took {time.time() - start_time} seconds')
 
-    result, vector_chains, vectors = prepare_output(json_data, polygon_file, mask_directory)
+    result, vector_chains, vectors = prepare_output(json_data, polygon_file)
     spl = os.path.basename(f).split('_')
     output_file_name = '_'.join(spl[1:len(spl)]) if os.path.basename(f).startswith('IN_') else os.path.basename(f)
 
@@ -456,7 +524,7 @@ for json_data, image_directory, mask_directory, vp, f, frame_amount in directori
         pickle.dump(vectors, pickle_file)
 
     output_file_name = "OUT_" + output_file_name
-    result['files'][0]['file_name'] = output_file_name
+    result['files'][0]['file_name'] = outp_without_ext
 
     with open(f"{OUTPUT_PATH}/{output_file_name}", "w") as outfile:
         json.dump(result, outfile, ensure_ascii=False)

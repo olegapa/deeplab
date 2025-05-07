@@ -74,8 +74,8 @@ def visualize_masks(video, json_data, output_dir):
 
                 frame_num = int(markups['markup_frame'])
                 polygons = markups['markup_path']['polygons']
-                x = int(markups['markup_path']['x'])
-                y = int(markups['markup_path']['y'])
+                # x = int(markups['markup_path']['x'])
+                # y = int(markups['markup_path']['y'])
                 color = color_mapping.get(cls, (255, 255, 255))
 
                 if frame_num < len(frames):
@@ -83,7 +83,7 @@ def visualize_masks(video, json_data, output_dir):
                     mask = np.zeros_like(overlay, dtype=np.uint8)
 
                     for polygon in polygons:
-                        polygon_shifted = [(px + x, py + y) for px, py in zip(polygon[::2], polygon[1::2])]
+                        polygon_shifted = [(px, py) for px, py in zip(polygon[::2], polygon[1::2])]
                         polygon_shifted = np.array(polygon_shifted, np.int32).reshape((-1, 1, 2))
                         cv2.fillPoly(mask, [polygon_shifted], color)
 

@@ -165,16 +165,10 @@ class DeeplabInference:
             with torch.no_grad():
                 (pred, class_out, vector) = model(im.to(device))
                 vector = vector.squeeze()
-                # encoder_res = model.encoder(im.to(device))
-                # logger.info(f"encoder shape = {len(encoder_res)}")
-                # for i in range(len(encoder_res)):
-                #     logger.info(f"{i} item has shape {encoder_res[i].shape}")
-                logger.info(f"class_outp.shape = {class_out.shape}\n class_out = {class_out}")
-                logger.info(f"class_outp.shape = {vector.shape}\n class_out = {vector}")
+
                 probs = torch.softmax(pred, dim=1)
                 pred_for_score = torch.argmax(pred, dim=1)
                 pred = pred_for_score.squeeze(0).cpu().numpy()
-                # print(model.classification_head)
 
             # Convert prediction to an image and save
             pred_img = Image.fromarray(pred.astype(np.uint8))
@@ -188,7 +182,6 @@ class DeeplabInference:
             polygons_per_image = {}
 
             for label, color in color_mapping.items():
-                # TODO: Delete it after training file with bboxes will appear
                 if int(label) == 0:
                     continue
                 mask = (pred == label).astype(np.uint8)
@@ -256,8 +249,10 @@ class DeeplabInference:
             with open(f"{self.class_info_path}_histogram", 'a', encoding='utf-8') as hist_file:
                 json.dump(hist_data, hist_file, ensure_ascii=False)  # Сохраняем полигоны в файл
 
-    def run(self, image_directory, mask_directory, polygon_file, h=None, w=None, pixel_hist_step=None, approx_eps=None):
+    def run(self, image_directory, mask_directory, polygon_file, h=None, w=None, pixel_hist_step=None, approx_eps=0.02):
         self.image_path, self.output_path, self.class_info_path = image_directory, mask_directory, polygon_file
+        if not approx_eps:
+            approx_eps = 0.02
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
         im_h = h if h else 224
         im_w = w if w else 224
