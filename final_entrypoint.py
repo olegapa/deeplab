@@ -95,7 +95,7 @@ if INPUT_DATA_ARG:
 
     SOLO_FILE = eval(json_input_arg.get("solo_file", "False"))
     MAKE_VISUALIZATION = eval(json_input_arg.get("visualize", "False"))
-    EVAL_MODE = eval(json_input_arg.get("visualize", "False"))
+    EVAL_MODE = eval(json_input_arg.get("eval_mode", "False"))
 
     approx_eps = json_input_arg.get("approx_eps", None)
     approx_eps = float(approx_eps) if approx_eps else None

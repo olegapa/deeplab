@@ -7,47 +7,55 @@ First of all you need to build an image:
 docker build -t deeplab-image .
 ```
 
-#### 1. Train over images-masks dataset
+## 1. Training or inference over images-masks dataset
 raw_data_entrypoint.py entrypoint can be used to train DeepLabV3+ over some dataset (e.g. generated from fashionpedia) that consists of folder with images and folder with masks.
 Example of executing an image with raw_data_entrypoint.py entrypoint
 ```
 sudo docker run --gpus all --shm-size=16g -v ./output/images:/images -v ./output/weights:/weights -v ./output:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./output/masks:/masks -it --rm deeplab_raw_data --work_format_training
 ```
-Additional flags:
-`--demo_mode` - execute 
-#### 2. Evaluate / training mode
+#### Additional flags:
 
-You need to run the container and mount all of the necessary directories. As an input_data parameter it is possible to pass parameters in json format, 
-for now, only parameter "frame_frequency" is supported. Example how to launch inference:
-```
-sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./video_1:/input -v ./fashionpedia_weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output_3:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./input_data:/markups -it --rm deeplab-image --input_data '{"frame_frequency": "10"}' --host_web "http://127.0.0.1:5555"
-```
-Example how to launch training:
-```
-sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./video_1:/input -v ./weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output_training:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./input_data_training:/markups -it --rm deeplab-image --input_data "" --host_web "http://127.0.0.1:5555" --work_format
-```
-New entrypoint start commands. Inference:
-```
-sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./new_videos:/input -v ./fashionpedia_weights/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./new_dl_inf_output:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./new_dl_inf_input:/markups -it --rm deeplab-image --input_data '{"weights": "deeplab_weights.pt"}' --host_web "http://127.0.0.1:5555"
-```
+`--demo_mode` - Execute in demo mode. All temporal files like images will be saved in output directory. Colored masks are saved as well.
 
-Apart from default keys: input_data and --work_format_training (flag that marks training mode)
-there also --demo_mode flag for inference that allows to save output bounder boxes and masks images in output
-directory (in order to visualize the results). 
+`--eval_mode` - Execute in metrics' evaluation mode. Metrics like Pixel Average, IoU, Loss function (cross entropy) sre printed in output log file.
 
-Additionally added python file raw_data_entrypoint.py that can be used as entrypoint script in Dockerfile. In this case Deeplab takes image directory (and mask directory if
-work_format_training) as input. Can be useful for testing and training on image datasets.
+#### Contents of `input_data` dictionary parameter:
+`tr_h` and `tr_w` - height and weight of deeplab input and output layer. Default value: 224
 
-To use container on image dataset, use raw_data_entrypoint.py as entrypoint in Dockerfile. Examples:
+`epoches` - maximum amount of training epoches. Default value: 50
 
+## 2. Evaluate / training mode
+
+You need to run the container and mount all the necessary directories. Optional deeplab execution parameters can be set through `input_data` parameter 
+. Execution example:
 ```
-sudo docker run --gpus all --shm-size=16g -v ./test:/images -v ./output/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output2:/output -v /var/run/docker.sock:/var/run/docker.sock -it --rm deeplab-image 
-```
-```
-sudo docker run --gpus all --shm-size=16g -v ./train:/images -v ./output/deeplab_weights.pt:/weights/deeplab_weights.pt -v ./output2:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./output/masks:/masks -it --rm deeplab-image --work_format_training
+sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./new_videos:/input_videos -v ./weights/trained/deeplab_weights.pt:/weights/deeplab_weights_new.pt -v ./new_dl_inf_output/custom_8cls_res50_4epo_224_224:/output -v /var/run/docker.sock:/var/run/docker.sock -v ./new_dl_inf_input:/input_data -it --rm --entrypoint "/bin/bash deeplab-final --input_data '{"weights": "deeplab_weights_new.pt"}' --host_web "http://127.0.0.1:5555"
 ```
 
-Format for inference output file:
+#### Additional flags:
+
+`--demo_mode` - Execute in demo mode. All temporal files like images will be saved in output directory. Colored masks are saved as well.
+
+`min_height` and `min_width` - Restriction on bounder box minimum size. Only bounder boxes of bigger size are processed
+
+#### Contents of `input_data` dictionary parameter:
+`tr_h` and `tr_w` - Height and weight of deeplab input and output layer. Default value: 224
+
+`epoches` - Maximum amount of training epoches. Default value: 50
+
+`frame_frequency` - Filters frames to be processed by frame numbers. E.g. if `frame_frequency = 10` then only frames with numbers 1, 11, 21... are processed
+
+`weights` - Deeplab weights file name
+
+`pixel_hist_step` - Specifies data step for pixel-wise confidence score histogram. If the parameter is specified additional file is generated in inference mode. It can be used for pixelwise_hist.ipynb
+
+`visualize` - If true then videos with processed masks are generated
+
+`eval_mode` - Execute in metrics' evaluation mode. Metrics like Pixel Average, IoU, Loss function (cross entropy) sre printed in output log file.
+
+`approx_eps` - Determines polygon approximation scale. The more value is the less polygons are in output. Default value 0.02
+
+#### Format for input/output file:
 ```json
 {
 	files: [
@@ -84,11 +92,11 @@ Format for inference output file:
   y: <rect_y>,
   width: <rect_width>,
   height: <rect_height>,
-  mask: <base_64_encoded_mask_image>,
-  polygons: <classes_mask_polygons>
+  polygons: <mask_polygons>,
+  "class": <mask_class> //only for training/eval mode
 }
 ```
-List of classes presented in classes_new.txt file.
+List of classes presented in shorted_classes.txt file.
 
 Pretrained weights can be downloaded: https://drive.google.com/file/d/18N3ZRyCcno1cLnV4GGHNOGfRMLYolTeI/view?usp=sharing
 Fashionpedia pretrained weights can be downloaded: https://drive.google.com/file/d/1sTSvxiswkwZGGQIzd1Lf_aEAhlb1AGtU/view?usp=sharing
