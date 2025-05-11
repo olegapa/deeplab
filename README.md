@@ -36,12 +36,12 @@ sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./new_vi
 
 `--demo_mode` - Execute in demo mode. All temporal files like images will be saved in output directory. Colored masks are saved as well.
 
-`min_height` and `min_width` - Restriction on bounder box minimum size. Only bounder boxes of bigger size are processed
+`--min_height` and `--min_width` - Restriction on bounder box minimum size. Only bounder boxes of bigger size are processed
 
 #### Contents of `input_data` dictionary parameter:
 `tr_h` and `tr_w` - Height and weight of deeplab input and output layer. Default value: 224
 
-`epoches` - Maximum amount of training epoches. Default value: 50
+`epoches` - Maximum amount of training epochs. Default value: 50
 
 `frame_frequency` - Filters frames to be processed by frame numbers. E.g. if `frame_frequency = 10` then only frames with numbers 1, 11, 21... are processed
 
@@ -53,7 +53,7 @@ sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./new_vi
 
 `eval_mode` - Execute in metrics' evaluation mode. Metrics like Pixel Average, IoU, Loss function (cross entropy) sre printed in output log file.
 
-`approx_eps` - Determines polygon approximation scale. The more value is the less polygons are in output. Default value 0.02
+`approx_eps` - Determines polygon approximation scale. The more value is the fewer polygons are in output. Default value 0.02
 
 #### Format for input/output file:
 ```json
@@ -93,7 +93,7 @@ sudo docker run --gpus all --shm-size=16g -v ./video/:/projects_data -v ./new_vi
   width: <rect_width>,
   height: <rect_height>,
   polygons: <mask_polygons>,
-  "class": <mask_class> //only for training/eval mode
+  class: <mask_class> //only for training/eval mode
 }
 ```
 List of classes presented in shorted_classes.txt file.
