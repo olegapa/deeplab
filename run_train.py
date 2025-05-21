@@ -201,7 +201,7 @@ class DeeplabTraining:
                     # Лосс для classification head
                     classification_loss = class_loss_fn(class_probs, class_labels)
 
-                    loss_ += 0.5 * classification_loss
+                    #loss_ += 0.5 * classification_loss
 
                     tr_iou_ += met.mIoU()
 
@@ -230,7 +230,7 @@ class DeeplabTraining:
                     # Лосс для classification head
                     classification_loss = class_loss_fn(class_probs, class_labels)
 
-                    val_loss_ += met.loss().item() + 0.5 * classification_loss.item()
+                    val_loss_ += met.loss().item() #+ 0.5 * classification_loss.item()
                     val_iou_ += met.mIoU()
                     val_pa_ += met.PA()
                     # logger.info(f"val_iou = {val_iou_}\tval_pa_ = {val_pa_} ")
@@ -297,7 +297,7 @@ class DeeplabTraining:
             classes=n_cls,
             activation='sigmoid'
         )
-        return CustomDeepLabV3Plus(num_classes=n_cls, encoder_name='resnet50', feature_dim=30, logger=logger)
+        return CustomDeepLabV3Plus(num_classes=n_cls, encoder_name='resnet50', feature_dim=30)
 
     def run(self, image_path, mask_path, model_path, output_weights, h=None, w=None, epoches=50, eval_mode=False):
         self.image_path, self.mask_path, self.model_path, self.output_weights = image_path, mask_path, model_path, output_weights

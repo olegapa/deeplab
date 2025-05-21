@@ -85,7 +85,12 @@ if args.min_height:
 else:
     min_height = 5
 if INPUT_DATA_ARG:
-    json_input_arg = json.loads(INPUT_DATA_ARG.replace("'", "\""))
+    try:
+        json_input_arg = json.loads(INPUT_DATA_ARG.replace("'", "\""))
+    except json.decoder.JSONDecodeError:
+        cs.post_error({"msg": "Wrong input_data argument format", "details": f"input_data is following {INPUT_DATA_ARG}"})
+        logger.info(f"Wrong input_data argument format {INPUT_DATA_ARG}")
+        exit(-1)
     PROCESS_FREQ = int(json_input_arg.get("frame_frequency", 1))
     WEIGHTS_FILENAME = json_input_arg.get("weights", None)
     h, w = int(json_input_arg.get("tr_h", 224)), int(json_input_arg.get("tr_w", 224))
@@ -412,7 +417,12 @@ bbox_info, empty_files = None, list()
 for file in files_in_directory:
     cs.post_progress({"stage": STAGE1, "progress": round(100 * (count / len(files_in_directory)), 2)})
     with open(file, 'r', encoding='utf-8') as input_json:
-        json_data = json.load(input_json)
+        try:
+            json_data = json.load(input_json)
+        except json.decoder.JSONDecodeError:
+            cs.post_error({"msg": "Error when loading json file", "details": f"File: {file}"})
+            logger.info(f"Error when loading json file {file}")
+            continue
 
     video_path = None
     _, dir_postfix = os.path.split(file)
@@ -437,16 +447,30 @@ for file in files_in_directory:
         # if not check_video_extension(video_path):
         #     continue
 
+        # To convert time to frame_num
         cap = cv2.VideoCapture(f'{INPUT}/{video_path}')
         fps = cap.get(cv2.CAP_PROP_FPS)
 
-        file_chains = item['file_chains']
+        file_chains = item.get('file_chains', None)
+        if not file_chains:
+            # cs.post_error({"msg": "file_chains key has not been found",
+            #                "details": f"File name {file}"})
+            continue
         for chain in file_chains:
-            chain_name = chain['chain_name']
+            chain_name = chain.get('chain_name', None)
+            if chain_name is None:
+                cs.post_error({"msg": "Chain name is not specified",
+                               "details": f"File name {file}"})
+                continue
             if WORK_FORMAT_TRAINING:
                 for frame in chain['chain_markups']:
                     frame_num = frame.get('markup_frame', None)
-                    if not frame_num:
+                    if frame_num is None:
+                        m_time = frame.get('markup_time', None)
+                        if m_time is None:
+                            cs.post_error({"msg": "Nor markup_frame, nor markup_time are set",
+                                           "details": f"File name {file}, chain_name {chain_name}"})
+                            continue
                         frame['markup_frame'] = round(float(frame['markup_time']) * float(fps))
                         frame_num = frame['markup_frame']
                     frame["markup_path"]["x"], frame["markup_path"]["y"] = round(frame["markup_path"]["x"]), round(
@@ -463,12 +487,17 @@ for file in files_in_directory:
                             prepared_data_train[frame_num][chain_name] = bbox_data
                             prepared_data_train[frame_num][chain_name]['polygons'] = dict()
                         prepared_data_train[frame_num][chain_name]['polygons'][frame['markup_path']['class']] = \
-                        frame["markup_path"]['polygons']
+                            frame["markup_path"]['polygons']
 
             else:
                 for frame in chain['chain_markups']:
                     frame_num = frame.get('markup_frame', None)
-                    if not frame_num:
+                    if frame_num is None:
+                        m_time = frame.get('markup_time', None)
+                        if m_time is None:
+                            cs.post_error({"msg": "Nor markup_frame, nor markup_time are set",
+                                           "details": f"File name {file}, chain_name {chain_name}"})
+                            continue
                         frame['markup_frame'] = round(float(frame['markup_time']) * float(fps))
                         frame_num = frame['markup_frame']
                     frame_time = frame['markup_time']
@@ -501,7 +530,12 @@ for file in files_in_directory:
     count += 1
 
 cs.post_progress({"stage": STAGE1, "progress": 100})
-
+if not directories:
+    logger.info("There no data to process")
+    for params in empty_files:
+        save_empty_file(*params)
+    cs.post_end()
+    exit(0)
 if WORK_FORMAT_TRAINING:
     cs.post_progress({"stage": STAGE2, "progress": 0})
     counter = ProgressCounter(total=total_images, processed=0, cs=cs, logger=logger, stage="Обучение")

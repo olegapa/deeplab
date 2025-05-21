@@ -13,4 +13,4 @@ RUN apt-get --yes install libgl1
 
 WORKDIR /segmentation
 # Точка входа для контейнера
-ENTRYPOINT ["python", "raw_data_entrypoint.py"]
+ENTRYPOINT ["python", "final_entrypoint.py"]
